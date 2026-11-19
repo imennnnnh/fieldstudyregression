@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.py[cod]
+runtime/
+data/uploads/
+data/artifacts/
+/.codex-attachments/
