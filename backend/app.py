@@ -18,7 +18,10 @@ from starlette.staticfiles import StaticFiles
 
 from .evaluation import evaluate_test_workbook
 from .excel_loader import PARAMETERS, DataError, ExcelSource, parse_integer, read_excel
-from .storage import TASK_TYPE, load_latest, load_uploaded_filenames, publish, read_json, save_uploads, write_json
+from .storage import (
+    TASK_TYPE, clear_training_files, load_latest, load_training_files,
+    load_uploaded_filenames, publish, read_json, stage_training_files, write_json,
+)
 from .training import TrainingError, is_valid, landing_errors, train
 
 
@@ -26,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = ROOT / "frontend"
 LOGGER = logging.getLogger(__name__)
 ACTIVE_STATUSES = {"uploading", "running"}
+TRAINING_FILES_ERROR = "無法載入已保存的訓練檔案，請查看後端終端機訊息。"
 
 
 def update_job(state, status, phase, message, **details):
@@ -39,6 +43,10 @@ def update_job(state, status, phase, message, **details):
         "status": status, "phase": phase, "message": message,
         **details,
     }
+    persist_job(state)
+
+
+def persist_job(state):
     try:
         write_json(state.artifacts / "training_status.json", state.job)
     except OSError:
@@ -60,6 +68,14 @@ def create_app(data_dir=ROOT / "data"):
         # 正式模型讀取出錯時，保留可啟動新訓練的服務狀態。
         except Exception:  # pylint: disable=broad-exception-caught
             LOGGER.exception("Could not load the published model and report")
+
+        state.training_files = None
+        try:
+            state.training_files = await run_in_threadpool(
+                load_training_files, state.data_dir, state.artifacts, state.published,
+            )
+        except (OSError, ValueError, TypeError, KeyError):
+            LOGGER.exception("Could not load the saved training files")
 
         state.job = {
             "run_id": None, "task_type": TASK_TYPE,
@@ -100,6 +116,7 @@ def create_app(data_dir=ROOT / "data"):
             Route("/", homepage),
             Route("/api/training", start_training, methods=["POST"]),
             Route("/api/training/status", training_status),
+            Route("/api/training/files", reset_training_files, methods=["DELETE"]),
             Route("/api/reports/latest", latest_report),
             Route("/api/evaluation", evaluate_model, methods=["POST"]),
             Route("/api/predict", predict_landing, methods=["POST"]),
@@ -124,19 +141,29 @@ async def homepage(_request):
 
 def job_payload(state):
     """回傳訓練狀態與最近成功發布的模型批次。"""
+    saved, missing = [], []
+    for file in state.training_files or []:
+        names = saved if file.path(state.data_dir).is_file() else missing
+        names.append(file.filename)
     return {
         **state.job,
         "latest_success_run_id": state.published.run_id if state.published else None,
+        "saved_training_files": saved,
+        "missing_training_files": missing,
+        "training_files_error": TRAINING_FILES_ERROR if state.training_files is None else "",
     }
 
 
 async def start_training(request):
-    """接收當次完整的訓練檔案清單，並安排背景訓練。"""
+    """接收新增的訓練檔案，與已保存的資料一起重新訓練。"""
     state = request.app.state
     if state.job["status"] in ACTIVE_STATUSES:
         raise HTTPException(409, "已有訓練進行中")
+    if state.training_files is None:
+        raise HTTPException(503, TRAINING_FILES_ERROR)
 
     run_id = str(uuid4())
+    previous_job = state.job
     state.job = {"run_id": run_id, "uploaded_files": state.job["uploaded_files"]}
     update_job(state, "uploading", "uploading", "接收訓練用 Excel")
     try:
@@ -150,7 +177,9 @@ async def start_training(request):
             for filename, _ in uploads:
                 if Path(filename).suffix.lower() != ".xlsx":
                     raise HTTPException(400, f"「{filename}」須為 .xlsx 檔案。")
-            sources = await run_in_threadpool(save_uploads, state.data_dir, run_id, uploads)
+            training_files, sources, new_filenames = await run_in_threadpool(
+                stage_training_files, state.data_dir, run_id, state.training_files, uploads,
+            )
     except HTTPException as error:
         update_job(state, "failed", "uploading", error.detail)
         raise
@@ -163,15 +192,20 @@ async def start_training(request):
         update_job(state, "failed", "uploading", message)
         raise HTTPException(500, message) from error
 
+    if not new_filenames:
+        state.job = previous_job
+        persist_job(state)
+        raise HTTPException(409, "沒有新增的訓練檔案")
+
     update_job(
         state, "running", "reading", "準備讀取 Excel",
-        uploaded_files=[source.filename for source in sources],
+        uploaded_files=new_filenames,
     )
-    state.task = asyncio.create_task(train_in_background(state, run_id, sources))
+    state.task = asyncio.create_task(train_in_background(state, run_id, sources, training_files))
     return JSONResponse(job_payload(state), status_code=202)
 
 
-async def train_in_background(state, run_id, sources):
+async def train_in_background(state, run_id, sources, training_files):
     """讀取資料、訓練模型並在成果完整時發布。"""
     loop = asyncio.get_running_loop()
 
@@ -185,7 +219,7 @@ async def train_in_background(state, run_id, sources):
         progress("reading", "Excel 已展開為逐球資料", counts=counts)
         models, records, report = train(balls, counts, run_id, progress)
         progress("publishing", "保存模型、逐折驗證紀錄與報表")
-        return publish(state.artifacts, run_id, models, records, report)
+        return publish(state.artifacts, run_id, models, records, report, training_files)
 
     try:
         published = await run_in_threadpool(run)
@@ -201,12 +235,27 @@ async def train_in_background(state, run_id, sources):
         update_job(state, "failed", phase, message)
     else:
         state.published = published
+        state.training_files = training_files
         update_job(state, "completed", "completed", "訓練完成", counts=published.report["data"])
 
 
 async def training_status(request):
     """提供前端輪詢所需的訓練狀態。"""
     return JSONResponse(job_payload(request.app.state), headers={"Cache-Control": "no-store"})
+
+
+async def reset_training_files(request):
+    state = request.app.state
+    if state.job["status"] in ACTIVE_STATUSES:
+        raise HTTPException(409, "訓練進行中，暫時無法清除訓練資料。")
+    # 同一個事件迴圈內完成小型 JSON 的替換，避免兩項操作交錯。
+    try:
+        clear_training_files(state.artifacts)
+    except (OSError, ValueError, TypeError) as error:
+        LOGGER.exception("Could not clear the saved training files")
+        raise HTTPException(500, "無法清除訓練資料，請查看後端終端機訊息。") from error
+    state.training_files = []
+    return JSONResponse(job_payload(state), headers={"Cache-Control": "no-store"})
 
 
 async def latest_report(request):

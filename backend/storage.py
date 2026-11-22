@@ -2,7 +2,8 @@ import csv
 import json
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
+from hashlib import file_digest
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from uuid import UUID
@@ -28,6 +29,23 @@ class PublishedRun:
     @property
     def run_id(self):
         return self.report["run_id"]
+
+
+@dataclass(frozen=True)
+class TrainingFile:
+    filename: str
+    upload_run_id: str
+    file_id: int
+    sha256: str | None = None
+
+    def __post_init__(self):
+        if (str(UUID(self.upload_run_id)) != self.upload_run_id or
+                type(self.file_id) is not int or self.file_id < 1 or
+                not isinstance(self.filename, str) or not self.filename):
+            raise ValueError("已保存的訓練檔案資料不完整。")
+
+    def path(self, data_dir):
+        return data_dir / "uploads" / self.upload_run_id / f"{self.file_id}.xlsx"
 
 
 def read_json(path):
@@ -62,8 +80,7 @@ def save_uploads(data_dir, run_id, files):
     return sources
 
 
-def load_uploaded_filenames(data_dir, run_id):
-    """讀取既有訓練批次的上傳原檔名。"""
+def load_upload_manifest(data_dir, run_id):
     try:
         directory = data_dir / "uploads" / str(UUID(str(run_id)))
         manifest = read_json(directory / "sources.json")
@@ -72,9 +89,98 @@ def load_uploaded_filenames(data_dir, run_id):
     if not isinstance(manifest, list):
         return []
     return [
-        source["filename"] for source in manifest
+        source for source in manifest
         if isinstance(source, dict) and isinstance(source.get("filename"), str)
     ]
+
+
+def load_uploaded_filenames(data_dir, run_id):
+    """讀取既有訓練批次的上傳原檔名。"""
+    return [source["filename"] for source in load_upload_manifest(data_dir, run_id)]
+
+
+def with_training_files(pointer, files):
+    return {**pointer, "training_files": [asdict(file) for file in files]}
+
+
+def load_training_files(data_dir, artifacts, published):
+    """只從正式模型的成功批次移轉舊檔。持久保存的空清單同樣有效。"""
+    pointer_path = artifacts / "latest_success.json"
+    if not pointer_path.is_file():
+        return []
+    pointer = read_json(pointer_path)
+    if "training_files" in pointer:
+        return [TrainingFile(**file) for file in pointer["training_files"]]
+    if published is None:
+        return []
+
+    files = []
+    seen = set()
+    sources = published.report["data"].get("sources") or load_upload_manifest(data_dir, published.run_id)
+    for source in sources:
+        file = TrainingFile(source["filename"], published.run_id, source["file_id"])
+        path = file.path(data_dir)
+        if not path.is_file():
+            files.append(file)
+            continue
+        try:
+            with path.open("rb") as stream:
+                digest = file_digest(stream, "sha256").hexdigest()
+        except FileNotFoundError:
+            files.append(file)
+            continue
+        if digest not in seen:
+            seen.add(digest)
+            files.append(replace(file, sha256=digest))
+    write_json(pointer_path, with_training_files(pointer, files))
+    return files
+
+
+def clear_training_files(artifacts):
+    pointer_path = artifacts / "latest_success.json"
+    pointer = read_json(pointer_path) if pointer_path.is_file() else {"run_id": None}
+    write_json(pointer_path, with_training_files(pointer, []))
+
+
+def stage_training_files(data_dir, run_id, saved_files, uploads):
+    """按內容去重，僅保存新增的 Excel，並重新編排本批次的來源編號。"""
+    files = []
+    seen = set()
+    for file in saved_files:
+        path = file.path(data_dir)
+        if not path.is_file():
+            continue
+        digest = file.sha256
+        if digest is None:
+            with path.open("rb") as stream:
+                digest = file_digest(stream, "sha256").hexdigest()
+        if digest not in seen:
+            seen.add(digest)
+            files.append(replace(file, sha256=digest))
+
+    new_uploads = []
+    digests = []
+    for filename, stream in uploads:
+        stream.seek(0)
+        digest = file_digest(stream, "sha256").hexdigest()
+        if digest not in seen:
+            seen.add(digest)
+            stream.seek(0)
+            new_uploads.append((filename, stream))
+            digests.append(digest)
+    if not new_uploads:
+        return [], [], []
+
+    new_files = [
+        TrainingFile(source.filename, run_id, source.file_id, digest)
+        for source, digest in zip(save_uploads(data_dir, run_id, new_uploads), digests, strict=True)
+    ]
+    files.extend(new_files)
+    sources = [
+        ExcelSource(index, file.filename, file.path(data_dir))
+        for index, file in enumerate(files, start=1)
+    ]
+    return files, sources, [file.filename for file in new_files]
 
 
 def load_bundle(directory, run_id, *, skip_legacy=False):
@@ -107,7 +213,7 @@ def load_bundle(directory, run_id, *, skip_legacy=False):
     return PublishedRun(report, models)
 
 
-def publish(artifacts, run_id, models, records, report):
+def publish(artifacts, run_id, models, records, report, training_files):
     with TemporaryDirectory(dir=artifacts, prefix=".staging-") as name:
         staging = Path(name)
         bundle = staging / run_id
@@ -126,7 +232,8 @@ def publish(artifacts, run_id, models, records, report):
         })
         published = load_bundle(bundle, run_id)
         bundle.rename(artifacts / run_id)
-    write_json(artifacts / "latest_success.json", {"run_id": run_id})
+    # 同一次原子替換提交模型和訓練清單，重啟時兩者會來自同一批次。
+    write_json(artifacts / "latest_success.json", with_training_files({"run_id": run_id}, training_files))
     return published
 
 
@@ -134,5 +241,8 @@ def load_latest(artifacts):
     pointer = artifacts / "latest_success.json"
     if not pointer.is_file():
         return None
-    run_id = str(UUID(read_json(pointer)["run_id"]))
+    run_id = read_json(pointer)["run_id"]
+    if run_id is None:
+        return None
+    run_id = str(UUID(run_id))
     return load_bundle(artifacts / run_id, run_id, skip_legacy=True)
