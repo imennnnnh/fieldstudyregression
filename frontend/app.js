@@ -2,11 +2,27 @@
 
 const byId = (id) => document.getElementById(id);
 const siteHeader = document.querySelector(".site-header");
+const brand = byId("home-link");
 const menuToggle = byId("menu-toggle");
 const navigation = byId("site-navigation");
+const wideLayout = window.matchMedia("(min-width: 46rem)");
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const menuTravel = 48;
+const menuFrequency = 5.84 / 0.3;
+const revealAnimations = new Map();
+let menuDrag = null;
+let dragFrame = 0;
+let suppressMenuClick = false;
+let activeView = null;
 const views = [
-  { id: "training-view", link: byId("training-link"), heading: byId("training-heading") },
-  { id: "prediction-view", link: byId("prediction-link"), heading: byId("prediction-heading") },
+  {
+    id: "training-view", link: byId("training-link"), heading: byId("training-heading"),
+    panels: [byId("training"), byId("independent-test")],
+  },
+  {
+    id: "prediction-view", link: byId("prediction-link"), heading: byId("prediction-heading"),
+    panels: [byId("prediction"), byId("prediction-heatmap")],
+  },
 ];
 const files = byId("files");
 const clearTraining = byId("clear-training-files");
@@ -46,26 +62,136 @@ let displayedRun = null;
 let latestRun = null;
 let testedRun = null;
 let polling = null;
+let pollTimer;
 
 const formatLanding = (x, y) => "(" + x + ", " + y + ")";
 const activeJob = (job) => job.status === "uploading" || job.status === "running";
 
-function setMenuOpen(open) {
+// Critically damped motion, evaluated in seconds from the last change of target.
+class Spring {
+  constructor(frequency, paint) {
+    this.frequency = frequency;
+    this.paint = paint;
+    this.value = 0;
+    this.velocity = 0;
+    this.frame = 0;
+  }
+
+  stop() {
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
+  }
+
+  jump(value, settled = true) {
+    this.stop();
+    this.value = value;
+    this.velocity = 0;
+    this.paint(value, settled);
+  }
+
+  moveTo(target, velocity = this.velocity) {
+    this.stop();
+    if (this.value === target && velocity === 0) {
+      this.jump(target);
+      return;
+    }
+    const start = performance.now();
+    const displacement = this.value - target;
+    const frequency = this.frequency;
+    const slope = velocity + frequency * displacement;
+    const step = (now) => {
+      const elapsed = Math.max(0, now - start) / 1000;
+      const decay = Math.exp(-frequency * elapsed);
+      const offset = (displacement + slope * elapsed) * decay;
+      this.velocity = (velocity - frequency * slope * elapsed) * decay;
+      if (Math.abs(offset) < 0.002 && Math.abs(this.velocity) < 0.025) {
+        this.jump(target);
+        return;
+      }
+      this.value = target + offset;
+      this.paint(this.value);
+      this.frame = requestAnimationFrame(step);
+    };
+    this.frame = requestAnimationFrame(step);
+  }
+}
+
+const menuMotion = new Spring(menuFrequency, (value, settled) => {
+  if (wideLayout.matches) {
+    navigation.style.removeProperty("opacity");
+    navigation.style.removeProperty("transform");
+    menuToggle.style.removeProperty("--menu-progress");
+  } else {
+    const visible = Math.min(1, Math.max(0, value));
+    navigation.style.opacity = value === 1 ? "" : visible;
+    navigation.style.transform = value === 1 ? "" :
+      `translateY(${(value - 1) * menuTravel}px) scale(${0.97 + visible * 0.03})`;
+    menuToggle.style.setProperty("--menu-progress", visible);
+  }
+  if (settled) {
+    siteHeader.classList.remove("menu-moving");
+    if (value === 0) siteHeader.classList.remove("menu-visible");
+  }
+});
+
+function setMenuOpen(open, { immediate = false, velocity } = {}) {
+  open = open && !wideLayout.matches;
+  if (!immediate && velocity === undefined && open === (menuToggle.getAttribute("aria-expanded") === "true")) return;
   menuToggle.setAttribute("aria-expanded", String(open));
-  siteHeader.classList.toggle("menu-open", open);
+  navigation.inert = !open && !wideLayout.matches;
+  if (!open && navigation.inert && navigation.contains(document.activeElement)) menuToggle.focus({ preventScroll: true });
+  if (open) siteHeader.classList.add("menu-visible");
+  if (immediate || wideLayout.matches || reduceMotion.matches) {
+    menuMotion.jump(Number(open));
+  } else {
+    siteHeader.classList.add("menu-moving");
+    menuMotion.moveTo(Number(open), velocity);
+  }
+}
+
+function reveal(element, { distance = 4, scale = 1, duration = 170, delay = 0 } = {}) {
+  if (reduceMotion.matches || document.hidden || element.closest("[hidden]") ||
+      typeof element.animate !== "function" || revealAnimations.has(element)) return;
+  const start = { opacity: 0.88 };
+  const end = { opacity: 1 };
+  if (distance) {
+    start.translate = `0 ${distance}px`;
+    end.translate = "0 0";
+  }
+  if (scale !== 1) {
+    start.scale = scale;
+    end.scale = 1;
+  }
+  const animation = element.animate([start, end], {
+    duration, delay, fill: "backwards", easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+  });
+  revealAnimations.set(element, animation);
+  animation.onfinish = () => {
+    if (revealAnimations.get(element) === animation) revealAnimations.delete(element);
+  };
+}
+
+function revealView(view, distance) {
+  view.panels.forEach((panel, index) => reveal(panel, { distance, duration: 245, delay: index * 18 }));
 }
 
 function showView(view, moveFocus = false) {
+  const changed = activeView !== view;
+  if (changed && activeView?.id === "prediction-view") {
+    byId(activeView.id).style.removeProperty("padding-block-end");
+  }
+  activeView = view;
   for (const item of views) {
     byId(item.id).hidden = item !== view;
     if (item === view) item.link.setAttribute("aria-current", "page");
     else item.link.removeAttribute("aria-current");
   }
-  setMenuOpen(false);
   if (moveFocus) {
     window.scrollTo(0, 0);
     view.heading.focus({ preventScroll: true });
+    if (changed) revealView(view, 6);
   }
+  setMenuOpen(false);
 }
 
 function viewFromLocation() {
@@ -83,44 +209,120 @@ function navigate(event, view) {
 for (const view of views) {
   view.link.addEventListener("click", (event) => navigate(event, view));
 }
-byId("home-link").addEventListener("click", (event) => navigate(event, views[0]));
+brand.addEventListener("click", (event) => navigate(event, views[0]));
 window.addEventListener("hashchange", () => showView(viewFromLocation(), true));
 
-menuToggle.addEventListener("click", () => {
+menuToggle.addEventListener("click", (event) => {
+  if (suppressMenuClick && event.detail !== 0) return;
   setMenuOpen(menuToggle.getAttribute("aria-expanded") !== "true");
 });
 document.addEventListener("click", (event) => {
   if (!navigation.contains(event.target) && !menuToggle.contains(event.target)) setMenuOpen(false);
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && menuToggle.getAttribute("aria-expanded") === "true") {
-    setMenuOpen(false);
-    menuToggle.focus();
-  }
+  if (event.key !== "Escape") return;
+  const wasDragging = menuDrag?.dragging;
+  if (!wasDragging && menuToggle.getAttribute("aria-expanded") !== "true") return;
+  cancelMenuDrag();
+  setMenuOpen(false, { velocity: wasDragging ? 0 : undefined });
+  menuToggle.focus({ preventScroll: true });
 });
-const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-const layoutAnimations = new WeakMap();
+menuToggle.addEventListener("pointerdown", (event) => {
+  if (!event.isPrimary || event.button !== 0) return;
+  suppressMenuClick = false;
+  if (reduceMotion.matches || wideLayout.matches) return;
+  cancelMenuDrag();
+  const listeners = new AbortController();
+  const { signal } = listeners;
+  menuDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, dragging: false, listeners };
+  window.addEventListener("pointermove", trackMenuDrag, { signal, passive: true });
+  window.addEventListener("pointerup", finishMenuDrag, { signal });
+  window.addEventListener("pointercancel", finishMenuDrag, { signal });
+});
 
-function animateLayoutChange(...regions) {
-  if (reduceMotion.matches) return;
+function trackMenuDrag(event) {
+  const drag = menuDrag;
+  if (event.pointerId !== drag?.id) return;
+  if (!drag.dragging) {
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+    suppressMenuClick = true;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      cancelMenuDrag();
+      return;
+    }
+    drag.dragging = true;
+    drag.anchor = drag.y + Math.sign(dy) * 10;
+    drag.start = menuMotion.value;
+    drag.position = menuMotion.value;
+    drag.velocity = 0;
+    menuMotion.stop();
+    siteHeader.classList.add("menu-visible", "menu-moving");
+    menuToggle.setPointerCapture(event.pointerId);
+  }
 
-  for (const region of regions) {
-    layoutAnimations.get(region)?.cancel();
-    const animation = region.animate([
-      { opacity: 0.8, transform: "translateY(6px)" },
-      { opacity: 1, transform: "translateY(0)" },
-    ], { duration: 220, easing: "ease-out" });
-    layoutAnimations.set(region, animation);
+  const raw = drag.start + (event.clientY - drag.anchor) / menuTravel;
+  const edge = Math.min(1, Math.max(0, raw));
+  const overshoot = (raw - edge) * menuTravel;
+  const position = edge + (10 * overshoot / (10 + Math.abs(overshoot))) / menuTravel;
+  const elapsed = event.timeStamp - drag.time;
+  if (elapsed > 0) drag.velocity = 0.35 * drag.velocity + 0.65 * (position - drag.position) * 1000 / elapsed;
+  drag.position = position;
+  drag.time = event.timeStamp;
+  if (!dragFrame) {
+    dragFrame = requestAnimationFrame(() => {
+      dragFrame = 0;
+      menuMotion.jump(drag.position, false);
+    });
   }
 }
 
-window.matchMedia("(min-width: 46rem)").addEventListener("change", () => {
-  setMenuOpen(false);
-  animateLayoutChange(siteHeader, byId("top"));
+function finishMenuDrag(event) {
+  const drag = menuDrag;
+  if (event.pointerId !== drag?.id) return;
+  cancelMenuDrag();
+  if (!drag.dragging) return;
+  if (drag.position !== menuMotion.value) menuMotion.jump(drag.position, false);
+  const cancelled = event.type !== "pointerup";
+  const velocity = cancelled || event.timeStamp - drag.time > 80
+    ? 0 : Math.max(-12, Math.min(12, drag.velocity));
+  // The integral of exponential decay with a 100 ms time constant is velocity × 0.1 s.
+  const projected = menuMotion.value + velocity * 0.1;
+  const open = cancelled ? menuToggle.getAttribute("aria-expanded") === "true" : projected >= 0.5;
+  setMenuOpen(open, { velocity });
+}
+
+menuToggle.addEventListener("lostpointercapture", finishMenuDrag);
+
+function cancelMenuDrag() {
+  const drag = menuDrag;
+  if (!drag) return;
+  menuDrag = null;
+  drag.listeners.abort();
+  cancelAnimationFrame(dragFrame);
+  dragFrame = 0;
+  if (menuToggle.hasPointerCapture(drag.id)) menuToggle.releasePointerCapture(drag.id);
+}
+
+wideLayout.addEventListener("change", () => {
+  cancelMenuDrag();
+  const restoreFocus = wideLayout.matches && document.activeElement === menuToggle;
+  setMenuOpen(false, { immediate: true });
+  if (restoreFocus) activeView.link.focus({ preventScroll: true });
+  reveal(brand);
+  revealView(activeView, 4);
 });
-window.matchMedia("(max-width: 26rem)").addEventListener("change", () => {
-  animateLayoutChange(siteHeader);
+window.matchMedia("(max-width: 26rem)").addEventListener("change", () => reveal(brand));
+window.matchMedia("(min-width: 68rem)").addEventListener("change", () => revealView(activeView, 4));
+reduceMotion.addEventListener("change", () => {
+  if (!reduceMotion.matches) return;
+  cancelMenuDrag();
+  setMenuOpen(menuToggle.getAttribute("aria-expanded") === "true", { immediate: true });
+  for (const animation of revealAnimations.values()) animation.cancel();
+  revealAnimations.clear();
 });
+setMenuOpen(false, { immediate: true });
 showView(viewFromLocation());
 
 async function api(path, options) {
@@ -149,9 +351,8 @@ function excelSelectionError(input, single = false) {
 
 function showModelState(state, message) {
   const indicator = byId("model-state");
-  indicator.dataset.state = state;
-  const text = byId("model-state-text");
-  if (text.textContent !== message) text.textContent = message;
+  if (indicator.dataset.state !== state) indicator.dataset.state = state;
+  setText(byId("model-state-text"), message);
 }
 
 function updateButtons() {
@@ -164,27 +365,31 @@ function updateButtons() {
   const testHint = byId("test-model-hint");
   if (modelReady) {
     showModelState("ready", "已就緒");
-    testHint.textContent = "";
+    setText(testHint, "");
   } else if (latestRun) {
     showModelState("checking", "載入中…");
-    testHint.textContent = "正在載入正式模型報表…";
+    setText(testHint, "正在載入正式模型報表…");
   } else if (lastJobStatus === "completed") {
     showModelState("unavailable", "尚未就緒");
-    testHint.textContent = "訓練已完成，但目前無法載入正式模型。請查看後端終端機訊息。";
+    setText(testHint, "訓練已完成，但目前無法載入正式模型。請查看後端終端機訊息。");
   } else {
     if (trainingActive || submitting) showModelState("training", "訓練中");
     else if (lastJobStatus === null) showModelState("checking", "確認中…");
     else showModelState("unavailable", lastJobStatus === "idle" ? "等待訓練" : "尚未就緒");
-    testHint.textContent = lastJobStatus === null ? "正在確認正式模型…" : "等待訓練迴歸模型";
+    setText(testHint, lastJobStatus === null ? "正在確認正式模型…" : "等待訓練迴歸模型");
   }
 
   testFile.disabled = testing;
   byId("evaluate-button").disabled = testing || !modelReady || Boolean(excelSelectionError(testFile, true));
 }
 
+function setText(element, message) {
+  if (element.textContent !== message) element.textContent = message;
+}
+
 function showStatus(id, message, error = false) {
   const element = byId(id);
-  element.textContent = message;
+  setText(element, message);
   element.classList.toggle("error", error);
 }
 
@@ -219,14 +424,15 @@ function renderJob(job) {
   byId("saved-files-empty").hidden = Boolean(savedTrainingCount || job.training_files_error);
   const savedError = job.training_files_error || (missingFiles.length
     ? "以下來源檔案缺失，將不納入訓練：" + missingFiles.join("、") : "");
-  const savedErrorElement = byId("saved-files-error");
-  if (savedErrorElement.textContent !== savedError) savedErrorElement.textContent = savedError;
+  setText(byId("saved-files-error"), savedError);
   updateButtons();
   const progress = byId("train-progress");
+  const progressWasHidden = progress.hidden;
   progress.hidden = !trainingActive || !job.total;
   if (!progress.hidden) {
-    progress.max = job.total;
-    progress.value = job.completed;
+    if (progress.max !== job.total) progress.max = job.total;
+    if (progress.value !== job.completed) progress.value = job.completed;
+    if (progressWasHidden) reveal(progress, { distance: 0 });
   }
   const stage = phases[job.phase];
   let message = job.message;
@@ -234,7 +440,7 @@ function renderJob(job) {
   if (!progress.hidden) message += "（" + job.completed + " / " + job.total + "）";
   if (job.status === "failed") message = "訓練失敗｜" + message;
   showStatus("train-status", message, job.status === "failed");
-  byId("data-counts").textContent = job.counts ? formatCounts(job.counts) : "";
+  setText(byId("data-counts"), job.counts ? formatCounts(job.counts) : "");
 }
 
 function formatCounts(counts) {
@@ -357,7 +563,10 @@ function renderReport(report) {
   renderEvaluation("metrics", "迴歸模型與基準線", [
     ["兩軸勝出模型", report.evaluation], ["基準線", report.baseline_evaluation],
   ]);
-  byId("report").hidden = false;
+  const content = byId("report");
+  const firstAppearance = content.hidden;
+  content.hidden = false;
+  if (firstAppearance) reveal(byId("report-heading"));
 }
 
 function clearTestResult() {
@@ -371,7 +580,9 @@ function renderTestReport(result) {
   byId("test-count").textContent = formatCounts(result.counts) + "。以有效球計算誤差，每球同權。";
   renderEvaluation("test-metrics", "獨立測試誤差", [["正式模型", result.evaluation]]);
   testedRun = result.run_id;
-  byId("test-result").hidden = false;
+  const report = byId("test-result");
+  report.hidden = false;
+  reveal(byId("test-result-heading"));
 }
 
 function observePublishedRun(runId) {
@@ -382,9 +593,16 @@ function observePublishedRun(runId) {
   }
 }
 
+function scheduleJobRefresh() {
+  clearTimeout(pollTimer);
+  if (document.hidden || clearingTraining || submitting) return;
+  pollTimer = setTimeout(refreshJob, trainingActive ? 1500 : 8000);
+}
+
 async function refreshJob() {
   if (clearingTraining) return;
   if (polling !== null) return polling;
+  clearTimeout(pollTimer);
   polling = (async () => {
     try {
       const job = await api("/api/training/status");
@@ -400,6 +618,7 @@ async function refreshJob() {
       showStatus("train-status", "無法更新訓練狀態，將重新連線。 " + error.message, true);
     } finally {
       polling = null;
+      scheduleJobRefresh();
     }
   })();
   return polling;
@@ -407,7 +626,10 @@ async function refreshJob() {
 
 function renderSelectedTrainingFiles() {
   renderFileList(byId("selected-files"), Array.from(files.files, (file) => file.name));
-  byId("selected-training").hidden = !files.files.length;
+  const list = byId("selected-training");
+  const wasHidden = list.hidden;
+  list.hidden = !files.files.length;
+  if (wasHidden && !list.hidden) reveal(list);
   const error = excelSelectionError(files);
   files.setCustomValidity(error);
   showStatus("train-file-error", files.files.length ? error : "", Boolean(error));
@@ -459,6 +681,7 @@ clearTraining.addEventListener("click", async () => {
   } finally {
     clearingTraining = false;
     updateButtons();
+    scheduleJobRefresh();
   }
 });
 
@@ -531,16 +754,53 @@ function renderComparison() {
 
 function updateMeasuredFields() {
   const enabled = measuredStatus.value === "valid";
+  const wasHidden = measuredCoordinates.hidden;
   measuredCoordinates.hidden = !enabled;
   measuredCoordinates.disabled = !enabled;
+  if (enabled && wasHidden) reveal(measuredCoordinates);
   renderComparison();
 }
 
 measuredStatus.addEventListener("change", updateMeasuredFields);
 measuredCoordinates.addEventListener("input", renderComparison);
 
+if (CSS.supports("appearance", "base-select") && CSS.supports("selector(::picker(select))")) {
+  let pickerFrame = 0;
+
+  function makeRoomForMeasuredPicker(event) {
+    if (event.target !== measuredStatus || pickerFrame) return;
+    pickerFrame = requestAnimationFrame(() => {
+      pickerFrame = 0;
+      if (!measuredStatus.matches(":open") || matchMedia("(forced-colors: active)").matches) return;
+
+      const root = document.documentElement;
+      const viewportHeight = root.clientHeight;
+      const rem = parseFloat(getComputedStyle(root).fontSize);
+      // Allow for the picker's capped height and the margins around it.
+      const pickerHeight = Math.min(9.5 * rem, 0.58 * viewportHeight) + 0.75 * rem;
+      const needed = Math.ceil(measuredStatus.getBoundingClientRect().bottom + pickerHeight - viewportHeight);
+      if (needed <= 0) return;
+
+      const available = root.scrollHeight - viewportHeight - window.scrollY;
+      if (needed > available) {
+        const view = byId("prediction-view");
+        const padding = parseFloat(view.style.paddingBlockEnd) || 0;
+        view.style.paddingBlockEnd = `${padding + Math.ceil(needed - available)}px`;
+      }
+      window.scrollBy({ top: needed, behavior: reduceMotion.matches ? "instant" : "smooth" });
+    });
+  }
+
+  measuredStatus.addEventListener("pointerdown", makeRoomForMeasuredPicker, { passive: true });
+  measuredStatus.addEventListener("click", makeRoomForMeasuredPicker);
+  measuredStatus.addEventListener("keydown", (event) => {
+    if (["Enter", " ", "ArrowDown", "ArrowUp", "F4"].includes(event.key)) makeRoomForMeasuredPicker(event);
+  });
+}
+
 function buildPredictionHeatmap() {
   // In Player A's view, X increases down the rows and Y increases across the columns.
+  const grid = document.createDocumentFragment();
   for (let x = 0; x <= 6; x++) {
     for (let y = 0; y <= 6; y++) {
       const cell = document.createElement("div");
@@ -552,12 +812,14 @@ function buildPredictionHeatmap() {
         cell.append(label);
         heatmapCells.push({ x, y, cell });
       }
-      predictionHeatmap.append(cell);
+      grid.append(cell);
     }
   }
+  predictionHeatmap.append(grid);
 }
 
 function renderPredictionHeatmap(prediction) {
+  if (!prediction && predictionMarker.hidden) return;
   for (const { x, y, cell } of heatmapCells) {
     if (prediction) {
       const distance = Math.hypot(x - prediction.x, y - prediction.y);
@@ -570,6 +832,7 @@ function renderPredictionHeatmap(prediction) {
   if (prediction) {
     predictionMarker.style.left = (prediction.y - 0.5) / 5 * 100 + "%";
     predictionMarker.style.top = (prediction.x - 0.5) / 5 * 100 + "%";
+    reveal(predictionMarker, { distance: 0, scale: 0.78, duration: 160 });
   }
 }
 
@@ -619,18 +882,29 @@ predictionForm.addEventListener("submit", async (event) => {
   }
 });
 
-function updateHeaderScroll() {
-  siteHeader.classList.toggle("is-scrolled", window.scrollY > 8);
-}
-
-window.addEventListener("scroll", updateHeaderScroll, { passive: true });
-updateHeaderScroll();
 buildPredictionHeatmap();
 updateMeasuredFields();
 updateButtons();
-refreshJob();
-setInterval(refreshJob, 1500);
+if (!document.hidden) refreshJob();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    if (!submitting) refreshJob();
+    return;
+  }
+  clearTimeout(pollTimer);
+  if (menuDrag) {
+    cancelMenuDrag();
+    setMenuOpen(menuToggle.getAttribute("aria-expanded") === "true", { immediate: true });
+  }
+});
 
-new IntersectionObserver(([entry]) => {
-  document.body.classList.toggle("can-scroll-down", !entry.isIntersecting);
-}).observe(byId("page-end"));
+const pageStart = byId("page-start");
+const pageEnd = byId("page-end");
+const pageEdges = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (entry.target === pageStart) siteHeader.classList.toggle("is-scrolled", !entry.isIntersecting);
+    else document.body.classList.toggle("can-scroll-down", !entry.isIntersecting);
+  }
+});
+pageEdges.observe(pageStart);
+pageEdges.observe(pageEnd);
