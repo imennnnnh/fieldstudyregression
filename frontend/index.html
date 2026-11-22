@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>桌球發球機落點預測</title>
-  <link rel="stylesheet" href="/static/styles.css?v=35">
-  <script src="/static/app.js?v=11" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=37">
+  <script src="/static/app.js?v=12" defer></script>
 </head>
 <body>
   <div class="shell app-layout">
@@ -30,10 +30,13 @@
       <section class="workspace" id="training-view" aria-label="模型訓練">
         <section class="panel" id="training" aria-labelledby="training-heading">
           <h2 id="training-heading" tabindex="-1">訓練資料</h2>
-          <div class="file-group" id="uploaded-training" hidden>
-            <h3 id="uploaded-files-heading">最近上傳的訓練檔案</h3>
-            <ul class="file-list" id="uploaded-files" aria-labelledby="uploaded-files-heading" tabindex="0"></ul>
+          <div class="file-group">
+            <h3 id="uploaded-files-heading">已保存的訓練檔案</h3>
+            <ul class="file-list" id="uploaded-files" aria-labelledby="uploaded-files-heading" tabindex="0" hidden></ul>
+            <p class="field-help" id="saved-files-empty" hidden>目前沒有已保存的訓練檔案。</p>
+            <p class="feedback error" id="saved-files-error" role="status"></p>
           </div>
+          <button id="clear-training-files" type="button" disabled>清除已上傳資料</button>
           <form id="training-form">
             <label class="file-picker" for="files">
               <span class="file-icon" aria-hidden="true"></span>
@@ -44,10 +47,10 @@
               <input id="files" name="files" type="file" accept=".xlsx" multiple required aria-labelledby="training-file-label" aria-describedby="training-file-format training-file-help train-file-error">
             </label>
             <div class="file-group" id="selected-training" hidden>
-              <h3 id="selected-files-heading">本次選取的檔案</h3>
+              <h3 id="selected-files-heading">本次新增</h3>
               <ul class="file-list" id="selected-files" aria-labelledby="selected-files-heading" tabindex="0"></ul>
             </div>
-            <p class="field-help" id="training-file-help">每次訓練只使用當次選取的檔案。合併新舊資料時，請一次選取所有檔案。</p>
+            <p class="field-help" id="training-file-help">只需選擇新收集的 Excel。啟動訓練時，系統會自動合併已保存的訓練檔案。</p>
             <p id="train-file-error" class="feedback error" role="status"></p>
             <button id="train-button" type="submit" disabled>啟動訓練</button>
           </form>

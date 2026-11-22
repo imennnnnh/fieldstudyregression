@@ -478,7 +478,12 @@ class APITests(unittest.IsolatedAsyncioTestCase):
             ("重複", n, 2, 3, 4, "(1,1)", "(2,2)", "飛出台面", "(1,1)", None)
             for n in range(1, 16)
         ]
-        files = [("任意檔名.xlsx", workbook_bytes(rows))] * 4
+        files = [
+            ("任意檔名.xlsx", workbook_bytes([rows[0], *[
+                (f"{row[0]}-{batch}", *row[1:]) for row in rows[1:]
+            ]]))
+            for batch in range(4)
+        ]
         input_values = b'{"angle":13.0,"position":2,"spin":3,"strength":4}'
         with tempfile.TemporaryDirectory(dir=RUNTIME) as directory:
             root = Path(directory)
@@ -505,8 +510,15 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(single_report["data"]["training_groups"], 15)
                     self.assertEqual(len(single_report["data"]["sources"]), 1)
 
-                    status, task = await request(app, "POST", "/api/training", **multipart(files))
+                    self.assertEqual(single_task["saved_training_files"], [])
+                    self.assertEqual(
+                        await request(app, "POST", "/api/training", **multipart([("改名的重複檔.xlsx", files[0][1])])),
+                        (409, {"error": "沒有新增的訓練檔案"}),
+                    )
+                    status, task = await request(app, "POST", "/api/training", **multipart([*files[1:], files[1]]))
                     self.assertEqual(status, 202)
+                    self.assertEqual(task["saved_training_files"], [files[0][0]])
+                    self.assertEqual((await request(app, "DELETE", "/api/training/files"))[0], 409)
                     self.assertEqual(
                         await request(app, "POST", "/api/training", **multipart(files)),
                         (409, {"error": "已有訓練進行中"}),
@@ -515,6 +527,7 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                 run_id = task["run_id"]
                 status, task = await request(app, "GET", "/api/training/status")
                 self.assertEqual((status, task["status"]), (200, "completed"))
+                self.assertEqual(task["saved_training_files"], [filename for filename, _ in files])
                 status, report = await request(app, "GET", "/api/reports/latest")
                 self.assertEqual((status, report["run_id"]), (200, run_id))
                 self.assertEqual(report["data"]["training_balls"], 180)
@@ -575,6 +588,7 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                     (status, failed["status"], failed["file"]), (200, "failed", "壞檔.xlsx"),
                 )
                 self.assertEqual(failed["latest_success_run_id"], run_id)
+                self.assertEqual(failed["saved_training_files"], task["saved_training_files"])
 
                 def reject_publication(path, payload):
                     if path.name == "latest_success.json":
@@ -587,7 +601,9 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                     self.assertLogs("backend.app", level="ERROR"),
                 ):
                     self.assertEqual(
-                        (await request(app, "POST", "/api/training", **multipart(files)))[0],
+                        (await request(app, "POST", "/api/training", **multipart([
+                            ("發布失敗.xlsx", workbook_bytes(rows)),
+                        ])))[0],
                         202,
                     )
                     await app.state.task
@@ -599,9 +615,9 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                     run_id,
                 )
 
-            self.assertEqual(
-                read_json(root / "artifacts" / "latest_success.json"), {"run_id": run_id},
-            )
+            pointer = read_json(root / "artifacts" / "latest_success.json")
+            self.assertEqual(pointer["run_id"], run_id)
+            self.assertEqual([file["filename"] for file in pointer["training_files"]], task["saved_training_files"])
             restarted = create_app(root)
             async with restarted.router.lifespan_context(restarted):
                 self.assertEqual(

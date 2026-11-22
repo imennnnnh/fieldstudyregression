@@ -9,6 +9,7 @@ const views = [
   { id: "prediction-view", link: byId("prediction-link"), heading: byId("prediction-heading") },
 ];
 const files = byId("files");
+const clearTraining = byId("clear-training-files");
 const testFile = byId("test-file");
 const measuredStatus = byId("measured-status");
 const measuredCoordinates = byId("measured-coordinates");
@@ -34,6 +35,9 @@ const phases = {
 let trainingActive = false;
 let lastJobStatus = null;
 let submitting = false;
+let clearingTraining = false;
+let savedTrainingCount = 0;
+let submittedRun = null;
 let predicting = false;
 let lastPrediction = null;
 let predictionRevision = 0;
@@ -151,8 +155,9 @@ function showModelState(state, message) {
 }
 
 function updateButtons() {
-  files.disabled = trainingActive || submitting;
+  files.disabled = trainingActive || submitting || clearingTraining;
   byId("train-button").disabled = files.disabled || Boolean(excelSelectionError(files));
+  clearTraining.disabled = files.disabled || lastJobStatus === null || !(savedTrainingCount || files.files.length);
   byId("predict-button").disabled = predicting || !displayedRun;
 
   const modelReady = Boolean(latestRun) && latestRun === displayedRun;
@@ -198,10 +203,25 @@ function renderFileList(list, filenames) {
 function renderJob(job) {
   lastJobStatus = job.status;
   trainingActive = activeJob(job);
+  if (submittedRun && submittedRun === job.run_id && !trainingActive) {
+    submittedRun = null;
+    if (job.status === "completed") {
+      files.value = "";
+      renderSelectedTrainingFiles();
+    }
+  }
+  const savedFiles = job.saved_training_files ?? [];
+  const missingFiles = job.missing_training_files ?? [];
+  savedTrainingCount = savedFiles.length + missingFiles.length;
+  const savedList = byId("uploaded-files");
+  renderFileList(savedList, savedFiles);
+  savedList.hidden = !savedFiles.length;
+  byId("saved-files-empty").hidden = Boolean(savedTrainingCount || job.training_files_error);
+  const savedError = job.training_files_error || (missingFiles.length
+    ? "以下來源檔案缺失，將不納入訓練：" + missingFiles.join("、") : "");
+  const savedErrorElement = byId("saved-files-error");
+  if (savedErrorElement.textContent !== savedError) savedErrorElement.textContent = savedError;
   updateButtons();
-  const uploadedFiles = job.uploaded_files ?? [];
-  renderFileList(byId("uploaded-files"), uploadedFiles);
-  byId("uploaded-training").hidden = !uploadedFiles.length;
   const progress = byId("train-progress");
   progress.hidden = !trainingActive || !job.total;
   if (!progress.hidden) {
@@ -363,6 +383,7 @@ function observePublishedRun(runId) {
 }
 
 async function refreshJob() {
+  if (clearingTraining) return;
   if (polling !== null) return polling;
   polling = (async () => {
     try {
@@ -384,31 +405,61 @@ async function refreshJob() {
   return polling;
 }
 
-files.addEventListener("change", () => {
+function renderSelectedTrainingFiles() {
   renderFileList(byId("selected-files"), Array.from(files.files, (file) => file.name));
   byId("selected-training").hidden = !files.files.length;
   const error = excelSelectionError(files);
   files.setCustomValidity(error);
-  byId("train-file-error").textContent = files.files.length ? error : "";
+  showStatus("train-file-error", files.files.length ? error : "", Boolean(error));
   updateButtons();
+}
+
+files.addEventListener("change", () => {
+  submittedRun = null;
+  renderSelectedTrainingFiles();
 });
 
 byId("training-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (submitting || trainingActive || excelSelectionError(files)) return;
+  if (files.disabled || excelSelectionError(files)) return;
   const body = new FormData(event.currentTarget);
   submitting = true;
   updateButtons();
+  showStatus("train-file-error", "");
   showStatus("train-status", "正在上傳 Excel…");
   try {
-    renderJob(await api("/api/training", { method: "POST", body }));
+    const job = await api("/api/training", { method: "POST", body });
+    submittedRun = job.run_id;
+    renderJob(job);
   } catch (error) {
-    showStatus("train-status", error.message, true);
+    showStatus("train-file-error", error.message, true);
   } finally {
     submitting = false;
     updateButtons();
   }
   await refreshJob();
+});
+
+clearTraining.addEventListener("click", async () => {
+  if (clearTraining.disabled || !window.confirm(
+    "清除後，下次將只使用新上傳的檔案訓練。上一版訓練完成的模型仍可使用。",
+  )) return;
+  clearingTraining = true;
+  updateButtons();
+  try {
+    await polling;
+    const job = await api("/api/training/files", { method: "DELETE" });
+    submittedRun = null;
+    files.value = "";
+    renderSelectedTrainingFiles();
+    renderJob(job);
+    showStatus("train-file-error", "已清除全部訓練資料。");
+  } catch (error) {
+    showStatus("train-file-error", error.message, true);
+  } finally {
+    clearingTraining = false;
+    updateButtons();
+  }
 });
 
 testFile.addEventListener("change", () => {
