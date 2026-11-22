@@ -94,7 +94,29 @@ document.addEventListener("keydown", (event) => {
     menuToggle.focus();
   }
 });
-window.matchMedia("(min-width: 60rem)").addEventListener("change", () => setMenuOpen(false));
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const layoutAnimations = new WeakMap();
+
+function animateLayoutChange(...regions) {
+  if (reduceMotion.matches) return;
+
+  for (const region of regions) {
+    layoutAnimations.get(region)?.cancel();
+    const animation = region.animate([
+      { opacity: 0.8, transform: "translateY(6px)" },
+      { opacity: 1, transform: "translateY(0)" },
+    ], { duration: 220, easing: "ease-out" });
+    layoutAnimations.set(region, animation);
+  }
+}
+
+window.matchMedia("(min-width: 46rem)").addEventListener("change", () => {
+  setMenuOpen(false);
+  animateLayoutChange(siteHeader, byId("top"));
+});
+window.matchMedia("(max-width: 26rem)").addEventListener("change", () => {
+  animateLayoutChange(siteHeader);
+});
 showView(viewFromLocation());
 
 async function api(path, options) {

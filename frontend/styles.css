@@ -35,6 +35,7 @@
   --bottom-fade-height: clamp(2.25rem, 6vh, 3.5rem);
   background: var(--page);
   color: var(--text);
+  scrollbar-gutter: stable;
   scroll-padding-top: 6.5rem;
   scroll-padding-bottom: var(--bottom-fade-height);
 }
@@ -71,6 +72,7 @@ p:empty { display: none; }
 .site-header::before, main::before, body::after {
   inset-inline: 0;
   pointer-events: none;
+  background: linear-gradient(var(--scroll-fade-direction, to top), transparent, var(--page) 96%);
   opacity: 0;
   transition: opacity 180ms ease-out;
 }
@@ -79,7 +81,6 @@ p:empty { display: none; }
   position: absolute;
   inset-block: calc(-1 * var(--header-offset)) -1.75rem;
   z-index: -1;
-  background: linear-gradient(to bottom, var(--page) 45%, transparent);
 }
 
 main::before {
@@ -89,28 +90,19 @@ main::before {
   z-index: 1;
   block-size: var(--top-fade-height);
   margin-block-end: calc(-1 * var(--top-fade-height));
-  background: linear-gradient(to top, transparent, var(--page) 96%);
 }
 
 body::after {
+  --scroll-fade-direction: to bottom;
   position: fixed;
   inset-block-end: 0;
   z-index: 0;
   block-size: var(--bottom-fade-height);
-  background: linear-gradient(to bottom, transparent, var(--page) 96%);
 }
 
 #page-end { block-size: 1px; }
 
 .site-header.is-scrolled::before, body.can-scroll-down::after { opacity: 1; }
-
-@supports (backdrop-filter: blur(16px)) and (mask-image: linear-gradient(#000, transparent)) {
-  .site-header::before {
-    background: rgb(23 23 25 / 52%);
-    backdrop-filter: blur(12px);
-    mask-image: linear-gradient(to bottom, #000 24%, transparent);
-  }
-}
 
 .header-inner, .panel {
   border: var(--panel-border-width) solid transparent;
@@ -123,9 +115,9 @@ body::after {
   position: relative;
   min-block-size: 4rem;
   border-radius: 2.25rem;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 0.65rem;
   padding: 0.5rem clamp(0.65rem, 2vw, 1.2rem);
 }
@@ -153,6 +145,7 @@ body::after {
 .brand {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   min-inline-size: 0;
   min-block-size: 2.75rem;
   border-radius: 0.55rem;
@@ -161,11 +154,11 @@ body::after {
   font-size: 1rem;
   font-weight: 700;
   line-height: 1.4;
+  text-align: center;
   text-wrap: balance;
 }
 
 main {
-  container-type: inline-size;
   min-inline-size: 0;
   padding-block: var(--gap) clamp(3rem, 6vw, 4rem);
 }
@@ -229,7 +222,10 @@ main {
 .model-state {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
+  justify-self: start;
+  max-inline-size: 100%;
   gap: 0.4rem;
   padding: 0.25rem 0.45rem;
   border: 1px solid var(--line);
@@ -238,12 +234,13 @@ main {
   color: var(--muted);
   font-size: 0.75rem;
   line-height: 1.25;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .model-state strong {
   display: inline-flex;
   align-items: center;
+  min-inline-size: 0;
   gap: 0.3rem;
   color: var(--text);
   font-weight: 650;
@@ -266,14 +263,6 @@ main {
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: var(--gap);
-}
-
-@container (min-width: 42rem) {
-  .workspace {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: stretch;
-  }
-  #report-section, #test-result, #measurement { grid-column: 1 / -1; }
 }
 
 .panel {
@@ -438,8 +427,10 @@ button {
 form > button[type="submit"] { inline-size: 100%; }
 
 .menu-toggle {
+  justify-self: end;
   padding: 0;
   border-color: var(--line);
+  border-radius: 1.05rem;
   background: var(--control);
   color: var(--text);
 }
@@ -558,7 +549,7 @@ thead th { font-size: 0.875rem; font-weight: 600; }
 }
 .correlation-missing { background: #484952; color: var(--text); }
 
-@media (min-width: 60rem) {
+@media (min-width: 46rem) {
   :root {
     --top-fade-height: var(--bottom-fade-height);
     scroll-padding-top: var(--top-fade-height);
@@ -566,7 +557,7 @@ thead th { font-size: 0.875rem; font-weight: 600; }
 
   .app-layout {
     display: grid;
-    grid-template-columns: clamp(14rem, 22vw, 17rem) minmax(0, 1fr);
+    grid-template-columns: clamp(11.5rem, 22vw, 17rem) minmax(0, 1fr);
     gap: var(--gap);
     inline-size: min(86rem, 100% - var(--gutter) * 2);
     padding-block-start: var(--gap);
@@ -581,6 +572,7 @@ thead th { font-size: 0.875rem; font-weight: 600; }
   .site-header::before, .header-inner::after, .menu-toggle { display: none; }
 
   .header-inner {
+    display: flex;
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
@@ -592,7 +584,7 @@ thead th { font-size: 0.875rem; font-weight: 600; }
     backdrop-filter: none;
   }
 
-  .brand { text-wrap: initial; }
+  .brand { justify-content: flex-start; text-align: start; text-wrap: initial; }
 
   .site-navigation {
     display: grid;
@@ -614,6 +606,18 @@ thead th { font-size: 0.875rem; font-weight: 600; }
   .site-header.is-scrolled + main::before { opacity: 1; }
 }
 
+@media (min-width: 68rem) {
+  .workspace {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+  #report-section, #test-result, #measurement { grid-column: 1 / -1; }
+}
+
+@media (width < 46rem) {
+  .model-state { border-radius: 0.85rem; }
+}
+
 @media (max-width: 38rem) {
   :root { scroll-padding-top: 8rem; }
   .table-wrap :is(th, td) { padding-inline: 0.5rem; }
@@ -621,7 +625,25 @@ thead th { font-size: 0.875rem; font-weight: 600; }
 }
 
 @media (max-width: 26rem) {
-  .model-state { flex-direction: column; align-items: flex-start; gap: 0.15rem; }
+  .header-inner {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.25rem 0.75rem;
+    padding-inline: 0.85rem;
+    border-radius: 1.5rem;
+  }
+
+  .brand { grid-area: 1 / 1 / 2 / -1; }
+
+  .model-state {
+    grid-area: 2 / 1;
+    padding-inline: 0.65rem;
+    border-radius: 999px;
+  }
+
+  .menu-toggle {
+    grid-area: 2 / 2;
+    border-radius: 50%;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -639,8 +661,6 @@ thead th { font-size: 0.875rem; font-weight: 600; }
   .site-header::before {
     inset-block-end: 0;
     background: var(--page);
-    backdrop-filter: none;
-    mask-image: none;
   }
 }
 

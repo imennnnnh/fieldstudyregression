@@ -4,22 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>桌球發球機落點預測</title>
-  <link rel="stylesheet" href="/static/styles.css?v=29">
-  <script src="/static/app.js?v=8" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=35">
+  <script src="/static/app.js?v=11" defer></script>
 </head>
 <body>
   <div class="shell app-layout">
     <header class="site-header">
       <div class="header-inner">
-        <button id="menu-toggle" class="menu-toggle" type="button" aria-label="主選單"
-          aria-expanded="false" aria-controls="site-navigation">
-          <span class="menu-icon" aria-hidden="true"></span>
-        </button>
-        <a class="brand" id="home-link" href="#training-view">桌球發球機落點預測系統</a>
         <div class="model-state" id="model-state" data-state="checking">
           <span>正式模型</span>
           <strong id="model-state-text" role="status">確認中…</strong>
         </div>
+        <a class="brand" id="home-link" href="#training-view">桌球發球機落點預測系統</a>
+        <button id="menu-toggle" class="menu-toggle" type="button" aria-label="主選單"
+          aria-expanded="false" aria-controls="site-navigation">
+          <span class="menu-icon" aria-hidden="true"></span>
+        </button>
         <nav id="site-navigation" class="site-navigation" aria-label="頁面導覽">
           <a id="training-link" href="#training-view" aria-current="page">模型訓練</a>
           <a id="prediction-link" href="#prediction-view">落點預測</a>
