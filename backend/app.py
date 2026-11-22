@@ -5,7 +5,6 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from decimal import Decimal
-from math import dist
 from pathlib import Path, PureWindowsPath
 from uuid import uuid4
 
@@ -19,8 +18,8 @@ from starlette.staticfiles import StaticFiles
 
 from .evaluation import evaluate_test_workbook
 from .excel_loader import PARAMETERS, DataError, ExcelSource, parse_integer, read_excel
-from .storage import load_latest, load_uploaded_filenames, publish, read_json, save_uploads, write_json
-from .training import TrainingError, is_valid, train
+from .storage import TASK_TYPE, load_latest, load_uploaded_filenames, publish, read_json, save_uploads, write_json
+from .training import TrainingError, is_valid, landing_errors, train
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,6 +35,7 @@ def update_job(state, status, phase, message, **details):
             details.setdefault(field, state.job[field])
     state.job = {
         "run_id": state.job["run_id"],
+        "task_type": TASK_TYPE,
         "status": status, "phase": phase, "message": message,
         **details,
     }
@@ -61,17 +61,20 @@ def create_app(data_dir=ROOT / "data"):
         except Exception:  # pylint: disable=broad-exception-caught
             LOGGER.exception("Could not load the published model and report")
 
-        state.job = {"run_id": None, "status": "idle", "phase": None, "message": ""}
+        state.job = {
+            "run_id": None, "task_type": TASK_TYPE,
+            "status": "idle", "phase": None, "message": "",
+        }
         status_path = state.artifacts / "training_status.json"
         if status_path.is_file():
             try:
                 saved = read_json(status_path)
-                if (
-                    not isinstance(saved, dict)
-                    or not {"run_id", "status", "phase", "message"} <= saved.keys()
-                ):
+                if not isinstance(saved, dict):
                     raise ValueError("Invalid training status")
-                state.job = saved
+                if saved.get("task_type") == TASK_TYPE:
+                    if not {"run_id", "status", "phase", "message"} <= saved.keys():
+                        raise ValueError("Invalid regression training status")
+                    state.job = saved
             except (OSError, ValueError):
                 LOGGER.exception("Could not load training status")
         uploaded_files = await run_in_threadpool(
@@ -233,6 +236,8 @@ async def evaluate_model(request):
             source = ExcelSource(1, filename, file.file)
             result = await run_in_threadpool(evaluate_test_workbook, published, source)
     except DataError as error:
+        if state.published is not published:
+            raise HTTPException(409, "正式模型已更新，請重新執行獨立測試。") from error
         return JSONResponse({"error": str(error), **error.details}, status_code=422)
     except HTTPException as error:
         if str(error.detail).startswith("Too many files."):
@@ -265,25 +270,24 @@ def parse_measured(measured):
 
 
 def compare_landing(predicted, measured):
-    """比較單球預測與實測，兩者皆有效時才計算距離。"""
+    """有有效實測座標時，計算兩軸絕對誤差與整球距離。"""
     if measured is None:
         return None
-    result = {"measured": measured, "same_cell": None, "distance": None}
-    predicted_valid, measured_valid = is_valid(predicted), is_valid(measured)
-    if predicted_valid and measured_valid:
-        return {**result, "status": "both_valid", "same_cell": predicted == measured,
-                "distance": dist(predicted, measured)}
-    if not predicted_valid and not measured_valid:
-        return {**result, "status": "both_invalid", "message": "同為無效"}
-    return {**result, "status": "validity_mismatch", "message": "有效性不一致"}
+    if not is_valid(measured):
+        return {"status": "invalid", "message": "實測為無效球，無座標可比對"}
+    errors = landing_errors(measured, predicted)
+    return {
+        "status": "valid", "measured": measured, "absolute_error_x": abs(errors["dx"]),
+        "absolute_error_y": abs(errors["dy"]), "distance": errors["distance"],
+    }
 
 
 def predict(published, parameters, measured):
     """以正式 X、Y 模型產生單球預測。"""
-    landing = tuple(int(published.models[axis].predict([parameters])[0]) for axis in "xy")
+    landing = tuple(float(published.models[axis].predict([parameters])[0]) for axis in "xy")
     return {
         "run_id": published.run_id, "x": landing[0], "y": landing[1],
-        "valid": is_valid(landing), "comparison": compare_landing(landing, measured),
+        "comparison": compare_landing(landing, measured),
     }
 
 

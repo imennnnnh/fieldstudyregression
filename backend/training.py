@@ -1,58 +1,155 @@
-from math import dist
+"""使用有效落點進行分組五折驗證、選模與正式重訓。"""
+
+import warnings
+from collections import Counter
+from math import hypot, sqrt
 from statistics import mean
 
 import numpy as np
-from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
-from sklearn.metrics import f1_score
-from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import GroupKFold, StratifiedGroupKFold
 
-from .excel_loader import PARAMETER_KEYS
+from .excel_loader import PARAMETERS, PARAMETER_KEYS
 
 
 FOLDS = "ABCDE"
 TREE_COUNT = 500
 RANDOM_SEED = 42
-AXIS_LABELS = list(range(6))
-ALGORITHMS = {"RF": RandomForestClassifier, "ET": ExtraTreesClassifier}
+ALGORITHMS = {"RF": RandomForestRegressor, "ET": ExtraTreesRegressor}
 CANDIDATES = {
     f"{algorithm}{axis}": (algorithm, column)
     for column, axis in enumerate("xy")
     for algorithm in ALGORITHMS
 }
-REPORT_NOTE = "同一批資料選模後的驗證表現，可能偏樂觀"
+REPORT_NOTE = (
+    "五折成績來自各折留出的球，同一套五折也用於選模。"
+    "正式 X、Y 模型用本批全部有效球重訓，正式模型的表現由另備的獨立測試資料評估。"
+)
 
 
 class TrainingError(ValueError):
     pass
 
 
+def is_valid(landing):
+    return all(1 <= coordinate <= 5 for coordinate in landing)
+
+
 def make_folds(features, coordinates):
-    if not len(features):
-        raise TrainingError("這批資料沒有可訓練的逐球紀錄。")
     settings, groups = np.unique(features, axis=0, return_inverse=True)
     groups = groups.ravel()
     if len(settings) < len(FOLDS):
-        raise TrainingError("五折驗證至少需要五組不同的四參數設定。")
+        raise TrainingError("五折驗證至少需要五組不同的有效四參數設定。")
 
-    landing_classes = coordinates[:, 0] * 6 + coordinates[:, 1]
-    splitter = StratifiedGroupKFold(
-        n_splits=len(FOLDS), shuffle=True, random_state=RANDOM_SEED,
-    )
-    try:
-        folds = list(splitter.split(features, landing_classes, groups))
-    except ValueError as error:
-        raise TrainingError(f"無法依整球落點完成分組五折切分（{error}）。") from error
+    # X、Y 實測值仍分別作為迴歸目標。合成的格號只用於分層。
+    landing_classes = (coordinates[:, 1] - 1) * 5 + coordinates[:, 0]
+    options = dict(n_splits=len(FOLDS), shuffle=True, random_state=RANDOM_SEED)
 
-    seen = np.zeros(len(features), dtype=int)
-    for training, validation in folds:
+    def split(splitter):
+        method = type(splitter).__name__
+        try:
+            return list(splitter.split(features, landing_classes, groups))
+        except Exception as error:
+            raise TrainingError(f"{method} 切分失敗（{type(error).__name__}: {error}）。") from error
+
+    split_warnings = []
+    fallback_reason = None
+    max_balls_in_cell = max(Counter(landing_classes).values())
+    method = "StratifiedGroupKFold"
+    if max_balls_in_cell < len(FOLDS):
+        fallback_reason = f"單格最大球數為 {max_balls_in_cell}，少於五顆。"
+    else:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", UserWarning)
+            folds = split(StratifiedGroupKFold(**options))
+        split_warnings = [str(warning.message) for warning in caught]
+        try:
+            validate_folds(folds, groups)
+        except TrainingError as error:
+            fallback_reason = f"StratifiedGroupKFold 切分未通過驗證。{error}"
+
+    if fallback_reason is not None:
+        method = "GroupKFold"
+        folds = split(GroupKFold(**options))
+        try:
+            validate_folds(folds, groups)
+        except TrainingError as error:
+            raise TrainingError(f"GroupKFold 切分未通過驗證。{error}") from error
+
+    return folds, {
+        "method": method,
+        "warnings": split_warnings,
+        "fallback_reason": fallback_reason,
+        "folds": {
+            fold: {
+                "training_balls": len(training),
+                "validation_balls": len(validation),
+                "training_groups": int(np.unique(groups[training]).size),
+                "validation_groups": int(np.unique(groups[validation]).size),
+            }
+            for fold, (training, validation) in zip(FOLDS, folds, strict=True)
+        },
+    }
+
+
+def validate_folds(folds, groups):
+    if len(folds) != len(FOLDS):
+        raise TrainingError(f"預期五折，實際取得 {len(folds)} 折。")
+    seen = np.zeros(len(groups), dtype=int)
+    for fold, (training, validation) in zip(FOLDS, folds, strict=True):
         if not len(training) or not len(validation):
-            raise TrainingError("切分後至少一折缺少訓練或驗證資料。")
+            raise TrainingError(f"{fold} 折缺少訓練或驗證資料。")
         if np.intersect1d(groups[training], groups[validation]).size:
-            raise TrainingError("切分後同一組四參數出現在同折的訓練集與驗證集。")
-        seen[validation] += 1
+            raise TrainingError(f"{fold} 折的訓練集和驗證集出現同一組四參數。")
+        np.add.at(seen, validation, 1)
     if not np.all(seen == 1):
-        raise TrainingError("切分後每球必須恰好被驗證一次。")
-    return folds
+        raise TrainingError("每顆有效球須恰好被驗證一次。")
+
+
+def summarize_data(balls, features, coordinates):
+    cells = Counter(ball.landing for ball in balls)
+    groups = {cell: set() for cell in cells}
+    for ball in balls:
+        groups[ball.landing].add(ball.parameters)
+
+    grid = []
+    unobserved = []
+    sparse = []
+    for y in range(1, 6):
+        row = []
+        for x in range(1, 6):
+            cell = (x, y)
+            counts = {"balls": cells[cell], "groups": len(groups.get(cell, ()))}
+            row.append(counts)
+            if not counts["balls"]:
+                unobserved.append([x, y])
+            elif counts["groups"] < len(FOLDS):
+                sparse.append({"x": x, "y": y, **counts})
+        grid.append(row)
+
+    labels = [label for _, label, _ in PARAMETERS] + ["實測 X", "實測 Y"]
+    columns = np.column_stack((features, coordinates))
+    varying = np.flatnonzero(np.any(columns != columns[0], axis=0))
+    matrix = [[None for _ in labels] for _ in labels]
+    if varying.size == 1:
+        index = varying[0]
+        matrix[index][index] = 1.0
+    elif varying.size > 1:
+        correlations = np.corrcoef(columns[:, varying], rowvar=False)
+        for row, i in enumerate(varying):
+            for column, j in enumerate(varying):
+                matrix[i][j] = 1.0 if i == j else float(correlations[row, column])
+
+    return {
+        "x_counts": [sum(row[x]["balls"] for row in grid) for x in range(5)],
+        "y_counts": [sum(cell["balls"] for cell in row) for row in grid],
+        "grid": grid,
+        "unobserved_cells": unobserved,
+        "min_observed_balls": min(cells.values()),
+        "sparse_cells": sparse,
+        "pearson": {"labels": labels, "matrix": matrix},
+    }
 
 
 def make_model(algorithm):
@@ -65,49 +162,33 @@ def make_model(algorithm):
     )
 
 
-def score_axis(actual, predicted):
-    return float(f1_score(
-        actual, predicted, labels=AXIS_LABELS, average="macro", zero_division=0,
-    ))
+def landing_errors(actual, predicted):
+    dx = float(predicted[0] - actual[0])
+    dy = float(predicted[1] - actual[1])
+    return {"dx": dx, "dy": dy, "distance": hypot(dx, dy)}
 
 
-def is_valid(landing):
-    return all(1 <= coordinate <= 5 for coordinate in landing)
-
-
-def evaluate(records):
-    # 矩陣以實際為列、預測為欄，索引 0 為有效，1 為無效。
-    matrices = {name: [[0, 0], [0, 0]] for name in ("x", "y", "ball")}
-    hits = dict(x=0, y=0, ball=0)
-    distances = []
-    for record in records:
-        actual = (record["actual_x"], record["actual_y"])
-        predicted = (record["predicted_x"], record["predicted_y"])
-        for axis, real, estimate in zip("xy", actual, predicted, strict=True):
-            hits[axis] += real == estimate
-            matrices[axis][int(real == 0)][int(estimate == 0)] += 1
-        hits["ball"] += actual == predicted
-        actual_valid, predicted_valid = is_valid(actual), is_valid(predicted)
-        matrices["ball"][int(not actual_valid)][int(not predicted_valid)] += 1
-        if actual_valid and predicted_valid:
-            distances.append(dist(actual, predicted))
-
-    (valid_valid, valid_invalid), (invalid_valid, invalid_invalid) = matrices["ball"]
-    def ratio(numerator, denominator):
-        return numerator / denominator if denominator else None
-
-    return {
-        "validation_balls": len(records),
-        "hit_rates": {name: ratio(count, len(records)) for name, count in hits.items()},
-        "validity_matrices": matrices,
-        "actual_valid_given_predicted_valid": ratio(valid_valid, valid_valid + invalid_valid),
-        "actual_invalid_given_predicted_invalid": ratio(invalid_invalid, valid_invalid + invalid_invalid),
-        "mean_distance": mean(distances) if distances else None,
-        "distance_balls": len(distances),
-    }
+def evaluate(records, x_key="predicted_x", y_key="predicted_y"):
+    """以同一批球逐球同權計算兩軸及整球誤差。"""
+    errors = [
+        landing_errors(
+            (record["actual_x"], record["actual_y"]),
+            (record[x_key], record[y_key]),
+        )
+        for record in records
+    ]
+    metrics = {"balls": len(errors)}
+    for axis in "xy":
+        differences = [error[f"d{axis}"] for error in errors]
+        mse = mean(difference ** 2 for difference in differences)
+        metrics[axis] = {"mae": mean(map(abs, differences)), "mse": mse, "rmse": sqrt(mse)}
+    metrics["mean_distance"] = mean(error["distance"] for error in errors)
+    metrics["rmse_distance"] = sqrt(metrics["x"]["mse"] + metrics["y"]["mse"])
+    return metrics
 
 
 def validation_record(ball, fold, predictions, winners):
+    x, y = (predictions[winners[axis]] for axis in "xy")
     return {
         "ball_id": ball.ball_id,
         "file_id": ball.file_id,
@@ -121,35 +202,55 @@ def validation_record(ball, fold, predictions, winners):
         "fold": fold,
         "actual_x": ball.landing[0],
         "actual_y": ball.landing[1],
-        **predictions,
-        "predicted_x": predictions[winners["x"]],
-        "predicted_y": predictions[winners["y"]],
+        **{name: predictions[name] for name in CANDIDATES},
+        "predicted_x": x,
+        "predicted_y": y,
+        "baseline_x": predictions["baseline_x"],
+        "baseline_y": predictions["baseline_y"],
+        **landing_errors(ball.landing, (x, y)),
     }
 
 
 def train(balls, counts, run_id, progress):
-    progress("splitting", "建立 A～E 五折")
-    features = np.asarray([ball.parameters for ball in balls], dtype=int)
-    coordinates = np.asarray([ball.landing for ball in balls], dtype=int)
-    folds = make_folds(features, coordinates)
+    balls = [ball for ball in balls if is_valid(ball.landing)]
+    counts = {
+        **counts, "training_balls": len(balls),
+        "training_groups": len({ball.parameters for ball in balls}),
+    }
+    progress("analyzing", "逐球篩選並分析有效落點", counts=counts)
+    if not balls:
+        raise TrainingError("無有效球可訓練。")
+    if counts["training_groups"] < len(FOLDS):
+        raise TrainingError("五折驗證至少需要五組不同的有效四參數設定。")
     ball_ids = [ball.ball_id for ball in balls]
     if len(set(ball_ids)) != len(ball_ids):
         raise TrainingError("逐球紀錄包含重複的唯一球號。")
 
-    scores = {name: {} for name in CANDIDATES}
-    predictions = {name: {} for name in CANDIDATES}
+    features = np.asarray([ball.parameters for ball in balls], dtype=int)
+    coordinates = np.asarray([ball.landing for ball in balls], dtype=int)
+    summary = summarize_data(balls, features, coordinates)
+    progress("splitting", "建立 A～E 五折")
+    folds, split = make_folds(features, coordinates)
+
+    baseline_names = ("baseline_x", "baseline_y")
+    scores = {name: {} for name in (*CANDIDATES, *baseline_names)}
+    predictions = {name: {} for name in scores}
     fold_by_id = {}
     completed = 0
     for fold, (training, validation) in zip(FOLDS, folds, strict=True):
         ids = [ball_ids[index] for index in validation]
         fold_by_id.update(dict.fromkeys(ids, fold))
+        for column, name in enumerate(baseline_names):
+            average = float(coordinates[training, column].mean())
+            estimates = [average] * len(validation)
+            scores[name][fold] = float(mean_squared_error(coordinates[validation, column], estimates))
+            predictions[name].update(dict.fromkeys(ids, average))
         for name, (algorithm, column) in CANDIDATES.items():
-            message = f"{fold} 折 {name}"
-            progress("cross_validation", message, fold=fold, model=name, completed=completed, total=20)
+            progress("cross_validation", f"{fold} 折 {name}", fold=fold, model=name, completed=completed, total=20)
             model = make_model(algorithm).fit(features[training], coordinates[training, column])
-            predicted = model.predict(features[validation])
-            scores[name][fold] = score_axis(coordinates[validation, column], predicted)
-            predictions[name].update(zip(ids, map(int, predicted), strict=True))
+            estimates = model.predict(features[validation])
+            scores[name][fold] = float(mean_squared_error(coordinates[validation, column], estimates))
+            predictions[name].update(zip(ids, map(float, estimates), strict=True))
             completed += 1
 
     progress("evaluating", "選出 X、Y 模型並計算整批評估", completed=20, total=20)
@@ -158,7 +259,7 @@ def train(balls, counts, run_id, progress):
         for name, fold_scores in scores.items()
     }
     winners = {
-        axis: max((f"RF{axis}", f"ET{axis}"), key=lambda name: selection[name]["mean"])
+        axis: min((f"RF{axis}", f"ET{axis}"), key=lambda name: selection[name]["mean"])
         for axis in "xy"
     }
     records = [
@@ -169,7 +270,6 @@ def train(balls, counts, run_id, progress):
         )
         for ball in balls
     ]
-    evaluation = evaluate(records)
 
     models = {}
     for column, axis in enumerate("xy"):
@@ -179,8 +279,11 @@ def train(balls, counts, run_id, progress):
     return models, records, {
         "run_id": run_id,
         "data": counts,
+        "data_summary": summary,
+        "split": split,
         "selection": selection,
         "winners": winners,
-        "evaluation": evaluation,
+        "evaluation": evaluate(records),
+        "baseline_evaluation": evaluate(records, "baseline_x", "baseline_y"),
         "note": REPORT_NOTE,
     }

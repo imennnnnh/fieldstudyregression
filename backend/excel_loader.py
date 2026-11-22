@@ -1,6 +1,7 @@
 """驗證實測 Excel 的欄位並展開逐球落點資料。"""
 
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -152,11 +153,13 @@ def read_excel(sources, progress):
     for source in sources:
         progress("reading", f"讀取並驗證「{source.filename}」")
         try:
-            workbook = load_workbook(source.path, read_only=True, data_only=True)
-            try:
-                sheets = read_sheets(workbook, source, balls, counts)
-            finally:
-                workbook.close()
+            stream = source.path.open("rb") if isinstance(source.path, Path) else nullcontext(source.path)
+            with stream as contents:
+                workbook = load_workbook(contents, read_only=True, data_only=True)
+                try:
+                    sheets = read_sheets(workbook, source, balls, counts)
+                finally:
+                    workbook.close()
         except DataError:
             raise
         except Exception as error:
@@ -174,4 +177,4 @@ def read_excel(sources, progress):
             "filename": source.filename,
             "sheets": sheets,
         })
-    return balls, {**counts, "training_balls": len(balls), "sources": used_sources}
+    return balls, {**counts, "sources": used_sources}
