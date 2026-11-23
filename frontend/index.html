@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>桌球發球機落點預測</title>
-  <link rel="stylesheet" href="/static/styles.css?v=46">
+  <link rel="stylesheet" href="/static/styles.css?v=52">
   <script src="/static/app.js?v=18" defer></script>
 </head>
 <body>
@@ -37,7 +37,7 @@
             <p class="field-help" id="saved-files-empty" hidden>目前沒有已保存的訓練檔案。</p>
             <p class="feedback error" id="saved-files-error" role="status"></p>
           </div>
-          <button id="clear-training-files" type="button" disabled>清除已上傳資料</button>
+          <button class="action-button" id="clear-training-files" type="button" disabled>清除已上傳資料</button>
           <form id="training-form">
             <label class="file-picker" for="files">
               <span class="file-icon" aria-hidden="true"></span>
@@ -53,7 +53,7 @@
             </div>
             <p class="field-help" id="training-file-help">只需選擇新收集的 Excel。啟動訓練時，系統會自動合併已保存的訓練檔案。</p>
             <p id="train-file-error" class="feedback error" role="status"></p>
-            <button id="train-button" type="submit" disabled>啟動訓練</button>
+            <button class="action-button" id="train-button" type="submit" disabled>啟動訓練</button>
           </form>
           <p id="train-status" class="feedback" role="status"></p>
           <progress id="train-progress" aria-label="目前階段已完成的模型數" hidden></progress>
@@ -73,7 +73,7 @@
             </label>
             <p class="selected-file" id="test-filename"></p>
             <p id="test-model-hint" class="field-help">請先完成訓練</p>
-            <button id="evaluate-button" type="submit" disabled>開始評估</button>
+            <button class="action-button" id="evaluate-button" type="submit" disabled>開始評估</button>
           </form>
           <p id="test-status" class="feedback" role="status"></p>
         </section>
@@ -136,7 +136,7 @@
                 <input name="strength" type="number" min="1" max="99" step="1" inputmode="numeric" required>
               </label>
             </div>
-            <button id="predict-button" type="submit" disabled>預測落點</button>
+            <button class="action-button" id="predict-button" type="submit" disabled>預測落點</button>
           </form>
           <div id="prediction-result" class="result-box" aria-live="polite" aria-atomic="true">
             <p class="result-label">界內落點估計</p>

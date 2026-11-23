@@ -402,21 +402,23 @@ select { appearance: none; padding-inline-end: 2rem; cursor: pointer; }
     .select-wrap:has(> #measured-status)::after { display: none; }
 
     #measured-status {
+      --measured-press-color: color-mix(in srgb, var(--accent-quiet), var(--accent) 10%);
       align-items: center;
       padding-inline-end: 0.95rem;
-      box-shadow: inset 0 2px 6px rgb(0 0 0 / 0%);
+    }
+
+    @media (hover: hover) {
+      #measured-status:hover { border-color: var(--accent-line); }
     }
 
     #measured-status:open {
       border-color: var(--accent-line);
       background-color: var(--accent-quiet);
-      box-shadow: inset 0 2px 6px rgb(0 0 0 / 10%);
     }
 
     #measured-status:active {
-      border-color: var(--accent-line);
-      background-color: var(--surface-quiet);
-      box-shadow: inset 0 2px 6px rgb(0 0 0 / 26%);
+      border-color: var(--accent);
+      background-color: var(--measured-press-color);
     }
 
     #measured-status::picker-icon {
@@ -450,13 +452,14 @@ select { appearance: none; padding-inline-end: 2rem; cursor: pointer; }
       min-block-size: 2.75rem;
       padding: 0.45rem 0.65rem;
       border-radius: 0.55rem;
-      box-shadow: inset 0 1px 4px rgb(0 0 0 / 0%);
       cursor: pointer;
     }
 
     #measured-status option:checked { background: var(--accent-quiet); color: var(--accent); }
-    #measured-status option:hover { background-color: var(--surface-quiet); }
-    #measured-status option:active { background-color: #2d384d; box-shadow: inset 0 1px 4px rgb(0 0 0 / 20%); }
+    @media (hover: hover) {
+      #measured-status option:hover { background-color: var(--surface-quiet); }
+    }
+    #measured-status option:active { background-color: var(--measured-press-color); }
     #measured-status option:focus-visible { outline-offset: -2px; }
     #measured-status option::checkmark { order: 1; margin-inline-start: auto; }
 
@@ -466,16 +469,13 @@ select { appearance: none; padding-inline-end: 2rem; cursor: pointer; }
       }
 
       #measured-status {
-        transition: border-color var(--select-settle), background-color var(--select-settle),
-          box-shadow var(--select-settle), scale var(--select-settle);
+        transition: border-color var(--motion-color), background-color var(--motion-color), scale 150ms ease-out;
       }
-      #measured-status:active { scale: 0.994; transition-duration: 85ms; }
+      #measured-status:active { scale: 0.995; transition-duration: 45ms; }
       #measured-status::picker-icon { transition: transform var(--select-settle); }
 
-      #measured-status option {
-        transition: background-color var(--select-settle), box-shadow var(--select-settle), scale var(--select-settle);
-      }
-      #measured-status option:active { scale: 0.997; transition-duration: 85ms; }
+      #measured-status option { transition: background-color var(--motion-color); }
+      #measured-status option:active { transition-duration: 55ms; }
 
       #measured-status::picker(select) {
         opacity: 0;
@@ -593,7 +593,16 @@ button {
 
 form > button[type="submit"], #clear-training-files { inline-size: 100%; }
 
+.action-button {
+  --action-hover: var(--accent-hover);
+  --action-pressed: color-mix(in srgb, var(--accent-hover), white 35%);
+  --action-pressed-border: rgb(255 255 255 / 95%);
+}
+
 #clear-training-files:not(:disabled) {
+  --action-hover: var(--surface-quiet);
+  --action-pressed: color-mix(in srgb, var(--accent-quiet), var(--accent) 16%);
+  --action-pressed-border: color-mix(in srgb, var(--accent-line), var(--accent) 18%);
   border-color: var(--line);
   background: var(--control);
   color: var(--text);
@@ -612,22 +621,34 @@ form > button[type="submit"], #clear-training-files { inline-size: 100%; }
 button:disabled { border-color: var(--line); background: var(--disabled-bg); color: var(--disabled-text); cursor: default; }
 
 @media (hover: hover) {
-  button:not(:disabled):hover { background-color: var(--accent-hover); }
-  #clear-training-files:not(:disabled):hover { background-color: var(--surface-quiet); }
+  .action-button:not(:disabled):hover { background-color: var(--action-hover); }
+  #clear-training-files:not(:disabled):hover { background-color: var(--action-hover); }
   .menu-toggle:not(:disabled):hover { background-color: var(--surface-quiet); }
   .file-picker:hover:not(:has(input:disabled)) { border-color: var(--accent); }
 }
 
-button:not(:disabled):active {
+.menu-toggle:not(:disabled):active {
   scale: 0.989;
-  background-color: #a5bae9;
   box-shadow: inset 0 1px 3px rgb(0 0 0 / 20%);
+  border-color: var(--control-line);
+  background-color: var(--surface-quiet);
   transition: none;
 }
 
-:is(.menu-toggle, #clear-training-files):not(:disabled):active {
-  border-color: var(--control-line);
-  background-color: var(--surface-quiet);
+.action-button:not(:disabled):active,
+#clear-training-files:not(:disabled):active {
+  background-color: var(--action-pressed);
+  border-color: var(--action-pressed-border);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .action-button {
+    transition: background-color 170ms ease-out, border-color 170ms ease-out, scale 150ms ease-out;
+  }
+  .action-button:not(:disabled):active {
+    scale: 0.995;
+    transition-duration: 45ms;
+  }
 }
 
 .site-navigation a:active {
@@ -842,7 +863,7 @@ thead th { font-size: 0.875rem; font-weight: 600; }
 
 @media (prefers-reduced-motion: reduce) {
   .site-header::before, .header-inner, main::before, body::after, .file-picker, button, .site-navigation a { transition: none; }
-  button:not(:disabled):active { scale: none; }
+  .menu-toggle:not(:disabled):active { scale: none; }
   .file-picker:active:not(:has(input:disabled)) { scale: none; }
   .site-navigation::before, .site-navigation a:active { transition: none; }
   .menu-toggle { touch-action: manipulation; }
