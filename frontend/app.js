@@ -3,24 +3,27 @@
 const byId = (id) => document.getElementById(id);
 const siteHeader = document.querySelector(".site-header");
 const brand = byId("home-link");
-const menuToggle = byId("menu-toggle");
 const navigation = byId("site-navigation");
+const bottomNavigation = byId("bottom-navigation");
 const wideLayout = window.matchMedia("(min-width: 46rem)");
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-const menuTravel = 48;
-const menuFrequency = 5.84 / 0.3;
+const motionStyles = getComputedStyle(document.documentElement);
+const motion = {
+  settle: parseFloat(motionStyles.getPropertyValue("--motion-settle")),
+  page: parseFloat(motionStyles.getPropertyValue("--motion-page")),
+  easing: motionStyles.getPropertyValue("--motion-ease").trim(),
+};
 const revealAnimations = new Map();
-let menuDrag = null;
-let dragFrame = 0;
-let suppressMenuClick = false;
 let activeView = null;
 const views = [
   {
-    id: "training-view", link: byId("training-link"), heading: byId("training-heading"),
+    id: "training-view", link: byId("training-link"), mobileLink: byId("mobile-training-link"),
+    heading: byId("training-heading"),
     panels: [byId("training"), byId("independent-test")],
   },
   {
-    id: "prediction-view", link: byId("prediction-link"), heading: byId("prediction-heading"),
+    id: "prediction-view", link: byId("prediction-link"), mobileLink: byId("mobile-prediction-link"),
+    heading: byId("prediction-heading"),
     panels: [byId("prediction"), byId("prediction-heatmap")],
   },
 ];
@@ -67,89 +70,7 @@ let pollTimer;
 const formatLanding = (x, y) => "(" + x + ", " + y + ")";
 const activeJob = (job) => job.status === "uploading" || job.status === "running";
 
-// Critically damped motion, evaluated in seconds from the last change of target.
-class Spring {
-  constructor(frequency, paint) {
-    this.frequency = frequency;
-    this.paint = paint;
-    this.value = 0;
-    this.velocity = 0;
-    this.frame = 0;
-  }
-
-  stop() {
-    cancelAnimationFrame(this.frame);
-    this.frame = 0;
-  }
-
-  jump(value, settled = true) {
-    this.stop();
-    this.value = value;
-    this.velocity = 0;
-    this.paint(value, settled);
-  }
-
-  moveTo(target, velocity = this.velocity) {
-    this.stop();
-    if (this.value === target && velocity === 0) {
-      this.jump(target);
-      return;
-    }
-    const start = performance.now();
-    const displacement = this.value - target;
-    const frequency = this.frequency;
-    const slope = velocity + frequency * displacement;
-    const step = (now) => {
-      const elapsed = Math.max(0, now - start) / 1000;
-      const decay = Math.exp(-frequency * elapsed);
-      const offset = (displacement + slope * elapsed) * decay;
-      this.velocity = (velocity - frequency * slope * elapsed) * decay;
-      if (Math.abs(offset) < 0.002 && Math.abs(this.velocity) < 0.025) {
-        this.jump(target);
-        return;
-      }
-      this.value = target + offset;
-      this.paint(this.value);
-      this.frame = requestAnimationFrame(step);
-    };
-    this.frame = requestAnimationFrame(step);
-  }
-}
-
-const menuMotion = new Spring(menuFrequency, (value, settled) => {
-  if (wideLayout.matches) {
-    navigation.style.removeProperty("opacity");
-    navigation.style.removeProperty("transform");
-    menuToggle.style.removeProperty("--menu-progress");
-  } else {
-    const visible = Math.min(1, Math.max(0, value));
-    navigation.style.opacity = value === 1 ? "" : visible;
-    navigation.style.transform = value === 1 ? "" :
-      `translateY(${(value - 1) * menuTravel}px) scale(${0.97 + visible * 0.03})`;
-    menuToggle.style.setProperty("--menu-progress", visible);
-  }
-  if (settled) {
-    siteHeader.classList.remove("menu-moving");
-    if (value === 0) siteHeader.classList.remove("menu-visible");
-  }
-});
-
-function setMenuOpen(open, { immediate = false, velocity } = {}) {
-  open = open && !wideLayout.matches;
-  if (!immediate && velocity === undefined && open === (menuToggle.getAttribute("aria-expanded") === "true")) return;
-  menuToggle.setAttribute("aria-expanded", String(open));
-  navigation.inert = !open && !wideLayout.matches;
-  if (!open && navigation.inert && navigation.contains(document.activeElement)) menuToggle.focus({ preventScroll: true });
-  if (open) siteHeader.classList.add("menu-visible");
-  if (immediate || wideLayout.matches || reduceMotion.matches) {
-    menuMotion.jump(Number(open));
-  } else {
-    siteHeader.classList.add("menu-moving");
-    menuMotion.moveTo(Number(open), velocity);
-  }
-}
-
-function reveal(element, { distance = 4, scale = 1, duration = 170, delay = 0 } = {}) {
+function reveal(element, { distance = 4, scale = 1, duration = motion.settle } = {}) {
   if (reduceMotion.matches || document.hidden || element.closest("[hidden]") ||
       typeof element.animate !== "function" || revealAnimations.has(element)) return;
   const start = { opacity: 0.88 };
@@ -163,7 +84,7 @@ function reveal(element, { distance = 4, scale = 1, duration = 170, delay = 0 } 
     end.scale = 1;
   }
   const animation = element.animate([start, end], {
-    duration, delay, fill: "backwards", easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+    duration, easing: motion.easing,
   });
   revealAnimations.set(element, animation);
   animation.onfinish = () => {
@@ -172,7 +93,7 @@ function reveal(element, { distance = 4, scale = 1, duration = 170, delay = 0 } 
 }
 
 function revealView(view, distance) {
-  view.panels.forEach((panel, index) => reveal(panel, { distance, duration: 245, delay: index * 18 }));
+  for (const panel of view.panels) reveal(panel, { distance, duration: motion.page });
 }
 
 function showView(view, moveFocus = false) {
@@ -183,15 +104,16 @@ function showView(view, moveFocus = false) {
   activeView = view;
   for (const item of views) {
     byId(item.id).hidden = item !== view;
-    if (item === view) item.link.setAttribute("aria-current", "page");
-    else item.link.removeAttribute("aria-current");
+    for (const link of [item.link, item.mobileLink]) {
+      if (item === view) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    }
   }
   if (moveFocus) {
     window.scrollTo(0, 0);
     view.heading.focus({ preventScroll: true });
-    if (changed) revealView(view, 6);
+    if (changed) revealView(view, wideLayout.matches ? 4 : 0);
   }
-  setMenuOpen(false);
 }
 
 function viewFromLocation() {
@@ -208,121 +130,23 @@ function navigate(event, view) {
 
 for (const view of views) {
   view.link.addEventListener("click", (event) => navigate(event, view));
+  view.mobileLink.addEventListener("click", (event) => navigate(event, view));
 }
 brand.addEventListener("click", (event) => navigate(event, views[0]));
 window.addEventListener("hashchange", () => showView(viewFromLocation(), true));
 
-menuToggle.addEventListener("click", (event) => {
-  if (suppressMenuClick && event.detail !== 0) return;
-  setMenuOpen(menuToggle.getAttribute("aria-expanded") !== "true");
-});
-document.addEventListener("click", (event) => {
-  if (!navigation.contains(event.target) && !menuToggle.contains(event.target)) setMenuOpen(false);
-});
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  const wasDragging = menuDrag?.dragging;
-  if (!wasDragging && menuToggle.getAttribute("aria-expanded") !== "true") return;
-  cancelMenuDrag();
-  setMenuOpen(false, { velocity: wasDragging ? 0 : undefined });
-  menuToggle.focus({ preventScroll: true });
-});
-menuToggle.addEventListener("pointerdown", (event) => {
-  if (!event.isPrimary || event.button !== 0) return;
-  suppressMenuClick = false;
-  if (reduceMotion.matches || wideLayout.matches) return;
-  cancelMenuDrag();
-  const listeners = new AbortController();
-  const { signal } = listeners;
-  menuDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, dragging: false, listeners };
-  window.addEventListener("pointermove", trackMenuDrag, { signal, passive: true });
-  window.addEventListener("pointerup", finishMenuDrag, { signal });
-  window.addEventListener("pointercancel", finishMenuDrag, { signal });
-});
-
-function trackMenuDrag(event) {
-  const drag = menuDrag;
-  if (event.pointerId !== drag?.id) return;
-  if (!drag.dragging) {
-    const dx = event.clientX - drag.x;
-    const dy = event.clientY - drag.y;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
-    suppressMenuClick = true;
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      cancelMenuDrag();
-      return;
-    }
-    drag.dragging = true;
-    drag.anchor = drag.y + Math.sign(dy) * 10;
-    drag.start = menuMotion.value;
-    drag.position = menuMotion.value;
-    drag.velocity = 0;
-    menuMotion.stop();
-    siteHeader.classList.add("menu-visible", "menu-moving");
-    menuToggle.setPointerCapture(event.pointerId);
-  }
-
-  const raw = drag.start + (event.clientY - drag.anchor) / menuTravel;
-  const edge = Math.min(1, Math.max(0, raw));
-  const overshoot = (raw - edge) * menuTravel;
-  const position = edge + (10 * overshoot / (10 + Math.abs(overshoot))) / menuTravel;
-  const elapsed = event.timeStamp - drag.time;
-  if (elapsed > 0) drag.velocity = 0.35 * drag.velocity + 0.65 * (position - drag.position) * 1000 / elapsed;
-  drag.position = position;
-  drag.time = event.timeStamp;
-  if (!dragFrame) {
-    dragFrame = requestAnimationFrame(() => {
-      dragFrame = 0;
-      menuMotion.jump(drag.position, false);
-    });
-  }
-}
-
-function finishMenuDrag(event) {
-  const drag = menuDrag;
-  if (event.pointerId !== drag?.id) return;
-  cancelMenuDrag();
-  if (!drag.dragging) return;
-  if (drag.position !== menuMotion.value) menuMotion.jump(drag.position, false);
-  const cancelled = event.type !== "pointerup";
-  const velocity = cancelled || event.timeStamp - drag.time > 80
-    ? 0 : Math.max(-12, Math.min(12, drag.velocity));
-  // The integral of exponential decay with a 100 ms time constant is velocity × 0.1 s.
-  const projected = menuMotion.value + velocity * 0.1;
-  const open = cancelled ? menuToggle.getAttribute("aria-expanded") === "true" : projected >= 0.5;
-  setMenuOpen(open, { velocity });
-}
-
-menuToggle.addEventListener("lostpointercapture", finishMenuDrag);
-
-function cancelMenuDrag() {
-  const drag = menuDrag;
-  if (!drag) return;
-  menuDrag = null;
-  drag.listeners.abort();
-  cancelAnimationFrame(dragFrame);
-  dragFrame = 0;
-  if (menuToggle.hasPointerCapture(drag.id)) menuToggle.releasePointerCapture(drag.id);
-}
-
 wideLayout.addEventListener("change", () => {
-  cancelMenuDrag();
-  const restoreFocus = wideLayout.matches && document.activeElement === menuToggle;
-  setMenuOpen(false, { immediate: true });
-  if (restoreFocus) activeView.link.focus({ preventScroll: true });
-  reveal(brand);
-  revealView(activeView, 4);
+  const previousNavigation = wideLayout.matches ? bottomNavigation : navigation;
+  if (previousNavigation.contains(document.activeElement)) {
+    const link = wideLayout.matches ? activeView.link : activeView.mobileLink;
+    link.focus({ preventScroll: true });
+  }
 });
-window.matchMedia("(max-width: 26rem)").addEventListener("change", () => reveal(brand));
-window.matchMedia("(min-width: 68rem)").addEventListener("change", () => revealView(activeView, 4));
 reduceMotion.addEventListener("change", () => {
   if (!reduceMotion.matches) return;
-  cancelMenuDrag();
-  setMenuOpen(menuToggle.getAttribute("aria-expanded") === "true", { immediate: true });
   for (const animation of revealAnimations.values()) animation.cancel();
   revealAnimations.clear();
 });
-setMenuOpen(false, { immediate: true });
 showView(viewFromLocation());
 
 async function api(path, options) {
@@ -480,11 +304,66 @@ function renderTable(id, caption, columns, rows, renderCell = (cell, value) => {
   byId(id).replaceChildren(wrapper);
 }
 
+function buildAxisChart(axis, counts, maximum) {
+  const chart = document.createElement("figure");
+  chart.className = "axis-chart";
+  const caption = document.createElement("figcaption");
+  caption.textContent = `${axis} 軸有效球分布`;
+  chart.append(caption);
+
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  if (total === 0) {
+    const empty = document.createElement("p");
+    empty.className = "report-meta";
+    empty.textContent = "無有效球資料";
+    chart.append(empty);
+    return chart;
+  }
+
+  const rows = document.createElement("ul");
+  rows.className = "axis-chart-rows";
+  rows.setAttribute("role", "list");
+  counts.forEach((count, index) => {
+    const row = document.createElement("li");
+    row.className = "axis-chart-row";
+    const label = document.createElement("span");
+    label.textContent = `第 ${index + 1} 格`;
+    const track = document.createElement("span");
+    track.className = "axis-chart-track";
+    track.setAttribute("aria-hidden", "true");
+    const bar = document.createElement("span");
+    bar.className = "axis-chart-bar";
+    bar.style.inlineSize = `${(count / maximum) * 100}%`;
+    track.append(bar);
+    const value = document.createElement("span");
+    value.className = "axis-chart-value";
+    value.textContent = `${number.format(count)} 球（${((count / total) * 100).toFixed(1)}%）`;
+    row.append(label, track, value);
+    rows.append(row);
+  });
+
+  const scale = document.createElement("div");
+  scale.className = "axis-chart-scale";
+  scale.setAttribute("aria-hidden", "true");
+  const ticks = document.createElement("div");
+  ticks.className = "axis-chart-ticks";
+  for (const tick of [0, maximum]) {
+    const label = document.createElement("span");
+    label.textContent = number.format(tick);
+    ticks.append(label);
+  }
+  scale.append(ticks);
+  chart.append(rows, scale);
+  return chart;
+}
+
 function renderDistribution(summary) {
-  renderTable("axis-distribution", "各軸每格有效球數", ["軸", ...cells], [
-    ["X 軸", ...summary.x_counts.map(number.format)],
-    ["Y 軸", ...summary.y_counts.map(number.format)],
-  ]);
+  const { x_counts: xCounts, y_counts: yCounts } = summary;
+  const maximum = Math.max(0, ...xCounts, ...yCounts);
+  byId("axis-distribution").replaceChildren(
+    buildAxisChart("X", xCounts, maximum),
+    buildAxisChart("Y", yCounts, maximum),
+  );
   renderTable("landing-grid", "5×5 落點表（有效球數／四參數組數）",
     ["Y ＼ X", ...cells],
     summary.grid.map((row, i) => [i + 1, ...row.map(({ balls, groups }) =>
@@ -778,7 +657,8 @@ if (CSS.supports("appearance", "base-select") && CSS.supports("selector(::picker
       const rem = parseFloat(getComputedStyle(root).fontSize);
       // Allow for the picker's capped height and the margins around it.
       const pickerHeight = Math.min(9.5 * rem, 0.58 * viewportHeight) + 0.75 * rem;
-      const needed = Math.ceil(measuredStatus.getBoundingClientRect().bottom + pickerHeight - viewportHeight);
+      const contentEdge = wideLayout.matches ? viewportHeight : bottomNavigation.getBoundingClientRect().top;
+      const needed = Math.ceil(measuredStatus.getBoundingClientRect().bottom + pickerHeight - contentEdge);
       if (needed <= 0) return;
 
       const available = root.scrollHeight - viewportHeight - window.scrollY;
@@ -832,7 +712,7 @@ function renderPredictionHeatmap(prediction) {
   if (prediction) {
     predictionMarker.style.left = (prediction.y - 0.5) / 5 * 100 + "%";
     predictionMarker.style.top = (prediction.x - 0.5) / 5 * 100 + "%";
-    reveal(predictionMarker, { distance: 0, scale: 0.78, duration: 160 });
+    reveal(predictionMarker, { distance: 0, scale: 0.78 });
   }
 }
 
@@ -892,19 +772,23 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   clearTimeout(pollTimer);
-  if (menuDrag) {
-    cancelMenuDrag();
-    setMenuOpen(menuToggle.getAttribute("aria-expanded") === "true", { immediate: true });
-  }
 });
 
 const pageStart = byId("page-start");
+const headerCollapseThreshold = byId("header-collapse-threshold");
 const pageEnd = byId("page-end");
 const pageEdges = new IntersectionObserver((entries) => {
   for (const entry of entries) {
-    if (entry.target === pageStart) siteHeader.classList.toggle("is-scrolled", !entry.isIntersecting);
-    else document.body.classList.toggle("can-scroll-down", !entry.isIntersecting);
+    if (entry.target === pageStart) {
+      siteHeader.classList.toggle("is-scrolled", !entry.isIntersecting);
+      if (entry.isIntersecting) siteHeader.classList.remove("is-compact");
+    } else if (entry.target === headerCollapseThreshold) {
+      if (!entry.isIntersecting) siteHeader.classList.add("is-compact");
+    } else {
+      document.body.classList.toggle("can-scroll-down", !entry.isIntersecting);
+    }
   }
 });
 pageEdges.observe(pageStart);
+pageEdges.observe(headerCollapseThreshold);
 pageEdges.observe(pageEnd);
