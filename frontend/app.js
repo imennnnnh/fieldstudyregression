@@ -361,6 +361,12 @@ function buildAxisChart(axis, counts, maximum) {
   return chart;
 }
 
+function shadeHeatmapCell(cell, strength) {
+  cell.style.setProperty("--heatmap-strength", strength);
+  // The midpoint of the grayscale ramp is where black text becomes more legible.
+  cell.classList.toggle("is-light-cell", strength >= 0.5);
+}
+
 function renderLandingHeatmap(grid) {
   const maximum = Math.max(0, ...grid.flat().map(({ balls }) => balls));
   const body = byId("landing-grid").tBodies[0];
@@ -376,7 +382,7 @@ function renderLandingHeatmap(grid) {
 
     for (const { balls, groups } of values) {
       const cell = row.insertCell();
-      cell.style.setProperty("--landing-heat", maximum ? `${(balls / maximum) * 100}%` : "0%");
+      shadeHeatmapCell(cell, maximum ? balls / maximum : 0);
       const ballCount = document.createElement("strong");
       ballCount.textContent = `${number.format(balls)} 球`;
       const groupCount = document.createElement("span");
@@ -468,14 +474,11 @@ function renderPearson({ labels, matrix }) {
     buildPearsonChart("X", parameters, matrix[parameters.length]),
     buildPearsonChart("Y", parameters, matrix[parameters.length + 1]),
   );
-  renderTable("pearson", "Pearson 相關係數", ["欄位", ...labels],
+  renderTable("pearson", "Pearson 相關係數（底色越亮，相關程度越強）", ["欄位", ...labels],
     matrix.map((row, index) => [labels[index], ...row]), (cell, value) => {
       cell.className = value === null ? "correlation correlation-missing" : "correlation";
       cell.textContent = value === null ? "無法計算" : value.toFixed(3);
-      if (value !== null) {
-        cell.style.setProperty("--correlation-color", value < 0 ? "var(--pearson-negative)" : "var(--pearson-positive)");
-        cell.style.setProperty("--correlation-weight", (Math.abs(value) * 100) + "%");
-      }
+      if (value !== null) shadeHeatmapCell(cell, Math.abs(value));
     },
   );
 }
@@ -869,9 +872,10 @@ function renderPredictionHeatmap(prediction) {
   for (const { x, y, cell } of heatmapCells) {
     if (prediction) {
       const distance = Math.hypot(x - prediction.x, y - prediction.y);
-      cell.style.setProperty("--heatmap-strength", Math.max(0, 1 - distance / 2));
+      shadeHeatmapCell(cell, Math.max(0, 1 - distance / 2));
     } else {
       cell.style.removeProperty("--heatmap-strength");
+      cell.classList.remove("is-light-cell");
     }
   }
   predictionMarker.hidden = !prediction;
