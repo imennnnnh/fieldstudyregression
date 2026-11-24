@@ -264,7 +264,8 @@ function renderJob(job) {
   if (!progress.hidden) message += "（" + job.completed + " / " + job.total + "）";
   if (job.status === "failed") message = "訓練失敗｜" + message;
   showStatus("train-status", message, job.status === "failed");
-  setText(byId("data-counts"), job.counts ? formatCounts(job.counts) : "");
+  const counts = job.status === "completed" ? null : job.counts;
+  setText(byId("data-counts"), counts ? formatCounts(counts) : "");
 }
 
 function formatCounts(counts) {
@@ -357,6 +358,34 @@ function buildAxisChart(axis, counts, maximum) {
   return chart;
 }
 
+function renderLandingHeatmap(grid) {
+  const maximum = Math.max(0, ...grid.flat().map(({ balls }) => balls));
+  const body = byId("landing-grid").tBodies[0];
+  body.replaceChildren();
+
+  for (const [index, values] of grid.entries()) {
+    const row = body.insertRow();
+    const heading = document.createElement("th");
+    heading.scope = "row";
+    heading.textContent = index + 1;
+    heading.setAttribute("aria-label", `Y 軸第 ${index + 1} 格`);
+    row.append(heading);
+
+    for (const { balls, groups } of values) {
+      const cell = row.insertCell();
+      cell.style.setProperty("--landing-heat", maximum ? `${(balls / maximum) * 100}%` : "0%");
+      const ballCount = document.createElement("strong");
+      ballCount.textContent = `${number.format(balls)} 球`;
+      const groupCount = document.createElement("span");
+      groupCount.textContent = `${number.format(groups)} 組設定`;
+      cell.append(ballCount, groupCount);
+    }
+  }
+
+  setText(byId("landing-heatmap-maximum"), `${number.format(maximum)} 球`);
+  byId("landing-heatmap-scale").classList.toggle("is-empty", maximum === 0);
+}
+
 function renderDistribution(summary) {
   const { x_counts: xCounts, y_counts: yCounts } = summary;
   const maximum = Math.max(0, ...xCounts, ...yCounts);
@@ -364,29 +393,84 @@ function renderDistribution(summary) {
     buildAxisChart("X", xCounts, maximum),
     buildAxisChart("Y", yCounts, maximum),
   );
-  renderTable("landing-grid", "5×5 落點表（有效球數／四參數組數）",
-    ["Y ＼ X", ...cells],
-    summary.grid.map((row, i) => [i + 1, ...row.map(({ balls, groups }) =>
-      number.format(balls) + "／" + number.format(groups))]),
-  );
-  byId("unobserved-cells").textContent = summary.unobserved_cells.length
-    ? "未觀測格 " + summary.unobserved_cells.map(([x, y]) => formatLanding(x, y)).join("、")
-    : "25 格皆有觀測";
-  byId("observed-minimum").textContent =
-    "有觀測的格子中，最少為 " + number.format(summary.min_observed_balls) + " 球。";
+  renderLandingHeatmap(summary.grid);
+  const totalCells = summary.grid.reduce((total, row) => total + row.length, 0);
+  const unobserved = summary.unobserved_cells;
+  const observed = totalCells - unobserved.length;
+  setText(byId("observed-coverage"), `${number.format(observed)}／${number.format(totalCells)} 格`);
+  setText(byId("observed-minimum"), observed ? `${number.format(summary.min_observed_balls)} 球` : "—");
+  setText(byId("unobserved-cells"), unobserved.length
+    ? "未觀測格 " + unobserved.map(([x, y]) => formatLanding(x, y)).join("、") : "");
   byId("coverage-warning").textContent = summary.sparse_cells.length
     ? "以下格子涵蓋少於五組四參數，無法覆蓋全部五折。 " + summary.sparse_cells
       .map(({ x, y, balls, groups }) => formatLanding(x, y) + " " +
         number.format(balls) + " 球／" + number.format(groups) + " 組").join("、")
     : "";
+}
 
-  const { labels, matrix } = summary.pearson;
+function buildPearsonChart(axis, parameters, values) {
+  const chart = document.createElement("figure");
+  chart.className = "pearson-chart";
+  chart.setAttribute("aria-describedby", "pearson-legend");
+  const caption = document.createElement("figcaption");
+  caption.textContent = `與實測 ${axis} 的相關`;
+
+  const rows = document.createElement("ul");
+  rows.className = "pearson-chart-rows";
+  rows.setAttribute("role", "list");
+  for (const [index, parameter] of parameters.entries()) {
+    const value = values[index];
+    const row = document.createElement("li");
+    row.className = "pearson-chart-row";
+    const label = document.createElement("span");
+    label.textContent = parameter;
+    const track = document.createElement("span");
+    track.className = "pearson-track";
+    track.setAttribute("aria-hidden", "true");
+
+    const coefficient = document.createElement("span");
+    coefficient.className = "pearson-coefficient";
+    coefficient.textContent = "—";
+    if (value !== null) {
+      const sign = value < 0 ? "−" : value > 0 ? "+" : "";
+      coefficient.textContent = sign + Math.abs(value).toFixed(3);
+      const bar = document.createElement("span");
+      bar.className = "pearson-bar";
+      bar.classList.toggle("is-negative", value < 0);
+      bar.style.inlineSize = `${Math.min(Math.abs(value), 1) * 50}%`;
+      track.append(bar);
+    }
+    row.append(label, track, coefficient);
+    rows.append(row);
+  }
+
+  const scale = document.createElement("div");
+  scale.className = "pearson-scale";
+  scale.setAttribute("aria-hidden", "true");
+  const ticks = document.createElement("div");
+  ticks.className = "pearson-ticks";
+  for (const value of ["−1", "0", "+1"]) {
+    const tick = document.createElement("span");
+    tick.textContent = value;
+    ticks.append(tick);
+  }
+  scale.append(ticks);
+  chart.append(caption, rows, scale);
+  return chart;
+}
+
+function renderPearson({ labels, matrix }) {
+  const parameters = labels.slice(0, -2);
+  byId("pearson-charts").replaceChildren(
+    buildPearsonChart("X", parameters, matrix[parameters.length]),
+    buildPearsonChart("Y", parameters, matrix[parameters.length + 1]),
+  );
   renderTable("pearson", "Pearson 相關係數", ["欄位", ...labels],
     matrix.map((row, index) => [labels[index], ...row]), (cell, value) => {
       cell.className = value === null ? "correlation correlation-missing" : "correlation";
       cell.textContent = value === null ? "無法計算" : value.toFixed(3);
       if (value !== null) {
-        cell.style.setProperty("--correlation-color", value < 0 ? "#2e6bbd" : "#be535d");
+        cell.style.setProperty("--correlation-color", value < 0 ? "var(--pearson-negative)" : "var(--pearson-positive)");
         cell.style.setProperty("--correlation-weight", (Math.abs(value) * 100) + "%");
       }
     },
@@ -415,8 +499,12 @@ function renderReport(report) {
   updateButtons();
   byId("report-status").hidden = true;
   byId("report-note").textContent = report.note;
-  byId("report-counts").textContent = formatCounts(report.data);
+  for (const value of byId("report-counts").querySelectorAll("[data-count]")) {
+    const count = report.data[value.dataset.count];
+    setText(value, count == null ? "—" : number.format(count));
+  }
   renderDistribution(report.data_summary);
+  renderPearson(report.data_summary.pearson);
 
   const split = report.split;
   byId("split-method").textContent = "切分方法 " + split.method +
@@ -442,6 +530,11 @@ function renderReport(report) {
   renderEvaluation("metrics", "迴歸模型與基準線", [
     ["兩軸勝出模型", report.evaluation], ["基準線", report.baseline_evaluation],
   ]);
+  const summary = byId("training-data-summary");
+  const summaryWasHidden = summary.hidden;
+  summary.hidden = false;
+  if (summaryWasHidden) reveal(byId("training-data-summary-heading"));
+
   const content = byId("report");
   const firstAppearance = content.hidden;
   content.hidden = false;
