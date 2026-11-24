@@ -439,9 +439,9 @@ select { appearance: none; padding-inline-end: 2rem; cursor: pointer; }
 
     @media (prefers-reduced-motion: no-preference) {
       #measured-status {
-        transition: border-color var(--motion-color), background-color var(--motion-color), scale var(--press-release);
+        transition: border-color var(--motion-color), background-color var(--motion-color);
       }
-      #measured-status:active { scale: 0.995; transition-duration: var(--motion-press); }
+      #measured-status:active { transition-duration: var(--motion-press); }
       #measured-status::picker-icon { transition: transform var(--press-release); }
 
       #measured-status option { transition: background-color var(--motion-color); }
