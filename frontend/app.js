@@ -30,6 +30,7 @@ const views = [
 const files = byId("files");
 const clearTraining = byId("clear-training-files");
 const testFile = byId("test-file");
+const clearTestFile = byId("clear-test-file");
 const measuredStatus = byId("measured-status");
 const measuredCoordinates = byId("measured-coordinates");
 const measuredX = measuredCoordinates.querySelector('[name="x"]');
@@ -41,6 +42,7 @@ const predictionMarker = byId("prediction-heatmap-marker");
 const heatmapCells = [];
 const number = new Intl.NumberFormat("zh-TW");
 const cells = [1, 2, 3, 4, 5];
+const foldLabels = [..."ABCDE"];
 const phases = {
   uploading: "上傳資料",
   reading: "讀取、驗證與展開",
@@ -205,6 +207,7 @@ function updateButtons() {
 
   testFile.disabled = testing;
   byId("evaluate-button").disabled = testing || !modelReady || Boolean(excelSelectionError(testFile, true));
+  clearTestFile.disabled = testing || !(testFile.files.length || testedRun);
 }
 
 function setText(element, message) {
@@ -493,6 +496,86 @@ function renderEvaluation(id, caption, batches) {
   ]));
 }
 
+function renderValidationErrors(evaluation, baseline) {
+  const modelDistance = evaluation.mean_distance;
+  const baselineDistance = baseline.mean_distance;
+  // Round the scale up to a half-grid step and give two zero values a visible scale.
+  const maximum = Math.max(0.5, Math.ceil(Math.max(modelDistance, baselineDistance) * 2) / 2);
+  byId("validation-count").textContent = `依五折驗證的 ${number.format(evaluation.balls)} 顆球計算，每球同權`;
+  byId("validation-mean-distance").textContent = modelDistance.toFixed(2);
+  byId("validation-x-mae").textContent = `${evaluation.x.mae.toFixed(2)} 格`;
+  byId("validation-y-mae").textContent = `${evaluation.y.mae.toFixed(2)} 格`;
+  byId("validation-error-midpoint").textContent = (maximum / 2).toFixed(2);
+  byId("validation-error-maximum").textContent = `${maximum.toFixed(2)} 格`;
+
+  for (const [id, distance] of [["validation-model-error", modelDistance], ["validation-baseline-error", baselineDistance]]) {
+    const row = byId(id);
+    row.querySelector(".validation-error-value").textContent = `${distance.toFixed(2)} 格`;
+    row.querySelector(".axis-chart-bar").style.inlineSize = `${(distance / maximum) * 100}%`;
+  }
+
+  renderEvaluation("metrics", "迴歸模型與基準線", [
+    ["兩軸勝出模型", evaluation], ["基準線", baseline],
+  ]);
+}
+
+function renderFoldGuide(split) {
+  const rows = foldLabels.map((validationFold, index) => {
+    const row = document.createElement("li");
+    const round = document.createElement("span");
+    round.className = "fold-round";
+    round.textContent = `第 ${index + 1} 輪`;
+    row.append(round);
+    for (const fold of foldLabels) {
+      const cell = document.createElement("span");
+      cell.className = "fold-cell";
+      const isValidation = fold === validationFold;
+      cell.classList.toggle("is-validation", isValidation);
+      const letter = document.createElement("strong");
+      letter.textContent = fold;
+      const role = document.createElement("span");
+      role.textContent = isValidation ? "驗證" : "訓練";
+      cell.append(letter, role);
+      row.append(cell);
+    }
+    return row;
+  });
+  byId("fold-rotation").replaceChildren(...rows);
+
+  byId("split-method").textContent = "切分方法 " + split.method +
+    (split.fallback_reason ? "。改用 GroupKFold 的原因為" + split.fallback_reason : "");
+  byId("split-warning").textContent = split.warnings.length ? "分層切分警告／" + split.warnings.join("／") : "";
+  renderTable("fold-summary", "各折資料量", ["折別", "訓練球數", "訓練組數", "驗證球數", "驗證組數"],
+    Object.entries(split.folds).map(([fold, counts]) => [fold, ...[
+      counts.training_balls, counts.training_groups, counts.validation_balls, counts.validation_groups,
+    ].map(number.format)]),
+  );
+}
+
+function renderModelSelection(report) {
+  for (const card of byId("model-results").children) {
+    const winner = report.winners[card.dataset.axis];
+    let winnerName = winner ?? "—";
+    for (const row of card.querySelectorAll("[data-model]")) {
+      const model = row.dataset.model;
+      const isWinner = model === winner;
+      row.classList.toggle("is-winner", isWinner);
+      row.querySelector("dd").textContent = report.selection[model]?.mean.toFixed(4) ?? "—";
+      if (isWinner) winnerName = row.querySelector("dt").textContent;
+    }
+    card.querySelector(".model-result-winner").textContent = winnerName;
+  }
+
+  byId("selection-run").textContent = "訓練批次 " + report.run_id;
+  const names = { baseline_x: "X 軸基準線（僅供比較）", baseline_y: "Y 軸基準線（僅供比較）" };
+  renderTable("scores", "五折平均 MSE（格²，每折同權）", ["模型", ...foldLabels, "五折平均"],
+    Object.entries(report.selection).map(([name, candidate]) => [
+      names[name] ?? name, ...foldLabels.map((fold) => candidate.folds[fold].toFixed(4)),
+      candidate.mean.toFixed(4),
+    ]),
+  );
+}
+
 function renderReport(report) {
   if (!displayedRun) showStatus("prediction-status", "等待輸入參數");
   displayedRun = report.run_id;
@@ -505,31 +588,9 @@ function renderReport(report) {
   }
   renderDistribution(report.data_summary);
   renderPearson(report.data_summary.pearson);
-
-  const split = report.split;
-  byId("split-method").textContent = "切分方法 " + split.method +
-    (split.fallback_reason ? "。改用 GroupKFold 的原因為" + split.fallback_reason : "");
-  byId("split-warning").textContent = split.warnings.length ? "分層切分警告／" + split.warnings.join("／") : "";
-  renderTable("fold-summary", "各折資料量", ["折別", "訓練球數", "訓練組數", "驗證球數", "驗證組數"],
-    Object.entries(split.folds).map(([fold, counts]) => [fold, ...[
-      counts.training_balls, counts.training_groups, counts.validation_balls, counts.validation_groups,
-    ].map(number.format)]),
-  );
-
-  byId("selected-models").textContent =
-    "勝出模型　X 軸 " + report.winners.x + "　Y 軸 " + report.winners.y + "　訓練批次 " + report.run_id;
-  const names = { baseline_x: "X 軸基準線（僅供比較）", baseline_y: "Y 軸基準線（僅供比較）" };
-  renderTable("scores", "五折平均 MSE（格²，每折同權）", ["模型", ..."ABCDE", "五折平均"],
-    Object.entries(report.selection).map(([name, candidate]) => [
-      names[name] ?? name, ...Array.from("ABCDE", (fold) => candidate.folds[fold].toFixed(4)),
-      candidate.mean.toFixed(4),
-    ]),
-  );
-  byId("validation-count").textContent =
-    "驗證球數 " + number.format(report.evaluation.balls) + "。全部留出球的 MSE 及其他誤差皆為每球同權。";
-  renderEvaluation("metrics", "迴歸模型與基準線", [
-    ["兩軸勝出模型", report.evaluation], ["基準線", report.baseline_evaluation],
-  ]);
+  renderFoldGuide(report.split);
+  renderModelSelection(report);
+  renderValidationErrors(report.evaluation, report.baseline_evaluation);
   const summary = byId("training-data-summary");
   const summaryWasHidden = summary.hidden;
   summary.hidden = false;
@@ -544,6 +605,9 @@ function renderReport(report) {
 function clearTestResult() {
   testedRun = null;
   byId("test-result").hidden = true;
+  setText(byId("test-source"), "");
+  setText(byId("test-count"), "");
+  byId("test-metrics").replaceChildren();
 }
 
 function renderTestReport(result) {
@@ -657,12 +721,21 @@ clearTraining.addEventListener("click", async () => {
   }
 });
 
-testFile.addEventListener("change", () => {
+function updateTestSelection(message = "") {
   clearTestResult();
-  byId("test-filename").textContent = testFile.files[0]?.name ?? "";
+  setText(byId("test-filename"), testFile.files[0]?.name ?? "");
   const error = testFile.files.length ? excelSelectionError(testFile, true) : "";
-  showStatus("test-status", error, Boolean(error));
+  showStatus("test-status", error || message, Boolean(error));
   updateButtons();
+}
+
+testFile.addEventListener("change", () => updateTestSelection());
+
+clearTestFile.addEventListener("click", () => {
+  if (clearTestFile.disabled) return;
+  testFile.value = "";
+  updateTestSelection("已清除測試資料與結果。");
+  testFile.focus({ preventScroll: true });
 });
 
 byId("test-form").addEventListener("submit", async (event) => {
