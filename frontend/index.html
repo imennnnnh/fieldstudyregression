@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>桌球發球機落點預測</title>
-  <link rel="stylesheet" href="/static/styles.css?v=64">
-  <script src="/static/app.js?v=22" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=73">
+  <script src="/static/app.js?v=27" defer></script>
 </head>
 <body>
   <div id="page-start" aria-hidden="true"></div>
@@ -75,19 +75,99 @@
           <p id="test-status" class="feedback" role="status"></p>
         </section>
 
+        <section class="panel" id="training-data-summary" aria-labelledby="training-data-summary-heading" hidden>
+          <h2 id="training-data-summary-heading">訓練資料整理</h2>
+          <div id="report-counts" class="training-counts">
+            <section aria-labelledby="raw-counts-heading">
+              <h3 id="raw-counts-heading">原始資料統計</h3>
+              <dl class="training-count-grid training-count-grid--raw">
+                <div class="training-count">
+                  <dt>總球位</dt>
+                  <dd><span data-count="total_balls"></span> <span class="training-count-unit">球位</span></dd>
+                </div>
+                <div class="training-count">
+                  <dt>有效球</dt>
+                  <dd><span data-count="valid_balls"></span> <span class="training-count-unit">球</span></dd>
+                </div>
+                <div class="training-count">
+                  <dt>無效球</dt>
+                  <dd><span data-count="invalid_balls"></span> <span class="training-count-unit">球</span></dd>
+                </div>
+                <div class="training-count">
+                  <dt>缺測</dt>
+                  <dd><span data-count="missing_balls"></span> <span class="training-count-unit">球</span></dd>
+                </div>
+              </dl>
+            </section>
+            <section aria-labelledby="regression-counts-heading">
+              <h3 id="regression-counts-heading">回歸資料</h3>
+              <dl class="training-count-grid training-count-grid--regression">
+                <div class="training-count">
+                  <dt>納入回歸球數</dt>
+                  <dd><span data-count="training_balls"></span> <span class="training-count-unit">球</span></dd>
+                </div>
+                <div class="training-count">
+                  <dt>四參數組數</dt>
+                  <dd><span data-count="training_groups"></span> <span class="training-count-unit">組</span></dd>
+                </div>
+              </dl>
+            </section>
+          </div>
+          <section id="axis-distribution" class="axis-charts" aria-label="各軸每格有效球數"></section>
+          <figure class="landing-heatmap">
+            <figcaption id="landing-heatmap-heading">有效球落點熱圖</figcaption>
+            <dl class="training-count-grid landing-coverage">
+              <div class="training-count">
+                <dt>有觀測格數</dt>
+                <dd id="observed-coverage"></dd>
+              </div>
+              <div class="training-count">
+                <dt>有觀測格最少球數</dt>
+                <dd id="observed-minimum"></dd>
+              </div>
+            </dl>
+            <table id="landing-grid" aria-labelledby="landing-heatmap-heading" aria-describedby="landing-heatmap-note">
+              <colgroup><col class="landing-heatmap-y"></colgroup>
+              <thead>
+                <tr aria-hidden="true"><td></td><td colspan="5">X 軸</td></tr>
+                <tr>
+                  <td>Y 軸</td>
+                  <th scope="col" aria-label="X 軸第 1 格">1</th>
+                  <th scope="col" aria-label="X 軸第 2 格">2</th>
+                  <th scope="col" aria-label="X 軸第 3 格">3</th>
+                  <th scope="col" aria-label="X 軸第 4 格">4</th>
+                  <th scope="col" aria-label="X 軸第 5 格">5</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="landing-heatmap-legend">
+              <p class="report-meta">底色越亮，代表有效球越多</p>
+              <div id="landing-heatmap-scale" class="landing-heatmap-scale">
+                <span>0 球</span>
+                <span class="landing-heatmap-gradient" aria-hidden="true"></span>
+                <span id="landing-heatmap-maximum"></span>
+              </div>
+            </div>
+            <p class="report-meta" id="landing-heatmap-note">組設定指落在該格的不同四參數組合數</p>
+          </figure>
+          <p id="unobserved-cells" class="report-meta"></p>
+          <p id="coverage-warning" class="note"></p>
+          <section class="pearson-section" aria-labelledby="pearson-heading">
+            <h3 id="pearson-heading">發球參數與實測落點的線性相關</h3>
+            <div id="pearson-charts" class="pearson-charts"></div>
+            <p class="report-meta pearson-legend" id="pearson-legend">−1 負相關｜0 無線性相關｜+1 正相關</p>
+            <details class="pearson-details">
+              <summary>查看完整相關矩陣</summary>
+              <div id="pearson"></div>
+            </details>
+          </section>
+        </section>
+
         <section class="panel" id="report-section" aria-labelledby="report-heading">
           <h2 id="report-heading">五折整批評估報表</h2>
           <div id="report" class="report-content" hidden>
             <p id="report-note" class="note"></p>
-            <h3>有效球資料分布</h3>
-            <p id="report-counts" class="report-meta"></p>
-            <section id="axis-distribution" class="axis-charts" aria-label="各軸每格有效球數"></section>
-            <div id="landing-grid"></div>
-            <p id="unobserved-cells" class="report-meta"></p>
-            <p id="observed-minimum" class="report-meta"></p>
-            <p id="coverage-warning" class="note"></p>
-            <p class="report-meta">相關色階固定為 −1 至 1。藍色為負相關，紅色為正相關，0 為中性。</p>
-            <div id="pearson"></div>
             <h3>分組五折與選模</h3>
             <p id="split-method" class="report-meta"></p>
             <p id="split-warning" class="note"></p>

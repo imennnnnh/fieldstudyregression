@@ -221,7 +221,7 @@ main {
   inset-inline: var(--nav-inset);
   inset-block-start: var(--nav-inset);
   block-size: calc((100% - 2 * var(--nav-inset) - var(--nav-gap)) / 2);
-  border: 1px solid var(--accent-line);
+  border: var(--frame-width) solid var(--accent-line);
   border-radius: var(--radius-control);
   background: var(--accent-quiet);
   pointer-events: none;
@@ -686,6 +686,57 @@ progress { display: block; inline-size: 100%; block-size: 0.55rem; margin: 0; ac
 .report-content { grid-template-columns: minmax(0, 1fr); }
 .report-content h3 { margin-block-start: 0.5rem; font-size: 1.05rem; }
 
+.training-counts {
+  container: training-counts / inline-size;
+  display: grid;
+  gap: var(--content-gap);
+}
+
+.training-counts h3 { margin-block-end: var(--label-gap); font-size: 1rem; }
+
+.training-count-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(0.5rem, 2cqi, 0.875rem);
+  margin: 0;
+}
+
+.training-count-grid--regression {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.5rem), 1fr));
+}
+
+@container training-counts (min-width: 32rem) {
+  .training-count-grid--raw { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.training-count {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  padding: clamp(0.625rem, 2cqi, 0.875rem);
+  border: var(--frame-width) solid var(--line);
+  border-radius: var(--radius-overlay);
+  background: var(--surface-quiet);
+  overflow-wrap: anywhere;
+}
+
+.training-count dt { color: var(--muted); font-size: 0.875rem; }
+
+.training-count dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.35rem;
+  margin: 0;
+  font-size: clamp(1.3rem, 4.2cqi, 2rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.training-count dd > span { min-inline-size: 0; }
+.training-count-unit { font-size: 0.75em; font-weight: 500; white-space: nowrap; }
+
 .axis-charts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
@@ -775,7 +826,206 @@ th:first-child { text-align: start; }
 thead { background: var(--surface-quiet); color: var(--muted); }
 thead th { font-size: 0.875rem; font-weight: 600; }
 #scores :is(thead th, td):last-child { background: var(--accent-quiet); color: var(--accent); font-weight: 680; }
-#landing-grid :is(th, td):not(:first-child) { inline-size: 16%; text-align: center; }
+.landing-heatmap {
+  --landing-heat-neutral: var(--surface-quiet);
+  --landing-heat-peak: #355c90;
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  margin: 0;
+  padding: clamp(0.5rem, 1.8vw, 1rem);
+  border: var(--frame-width) solid var(--line);
+  border-radius: var(--radius-overlay);
+}
+
+.landing-heatmap figcaption { font-weight: 660; }
+
+.landing-coverage { max-inline-size: 28rem; gap: 0.5rem; }
+.landing-coverage .training-count { align-content: space-between; padding: 0.5rem 0.65rem; }
+.landing-coverage dt { font-size: 0.75rem; }
+.landing-coverage dd { font-size: clamp(1rem, 4cqi, 1.25rem); }
+
+#landing-grid {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: clamp(3px, 0.5vw + 1px, 7px);
+}
+
+.landing-heatmap-y { inline-size: clamp(1.5rem, 5cqi, 3rem); }
+#landing-grid thead { background: transparent; }
+
+#landing-grid :is(th, td) {
+  padding: 0.25rem 0;
+  border: 0;
+  text-align: center;
+  white-space: normal;
+}
+
+#landing-grid th, #landing-grid thead td { color: var(--muted); font-size: clamp(0.6875rem, 2.8cqi, 0.875rem); }
+
+#landing-grid tbody td {
+  padding-block: clamp(0.45rem, 1.6cqi, 0.9rem);
+  border-radius: 0.45rem;
+  background: color-mix(in srgb, var(--landing-heat-neutral), var(--landing-heat-peak) var(--landing-heat));
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+#landing-grid tbody td > * { display: block; }
+#landing-grid strong { font-size: clamp(0.75rem, 3.6cqi, 1.15rem); }
+#landing-grid tbody td span {
+  margin-block-start: 0.2rem;
+  color: #d9e5f7;
+  font-size: clamp(0.625rem, 2.4cqi, 0.8125rem);
+}
+
+.landing-heatmap-legend { display: grid; gap: 0.3rem; }
+
+.landing-heatmap-scale {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  inline-size: min(100%, 22rem);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.landing-heatmap-gradient {
+  block-size: 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--landing-heat-neutral), var(--landing-heat-peak));
+}
+
+.landing-heatmap-scale.is-empty .landing-heatmap-gradient { background: var(--landing-heat-neutral); }
+
+@media (max-width: 38rem) {
+  .landing-heatmap { margin-inline: -0.75rem; }
+}
+
+@container (max-width: 18rem) {
+  .landing-heatmap-y { inline-size: 1.15rem; }
+  #landing-grid { border-spacing: 3px 4px; }
+  #landing-grid tbody td span { word-spacing: -0.16em; }
+}
+
+@media (max-width: 22rem) {
+  .landing-heatmap { margin-inline: -1.1rem; padding-inline: 0.25rem; }
+}
+
+@media (max-width: 19rem) {
+  .landing-heatmap { margin-inline: -1.25rem; padding-inline: 0.125rem; }
+  .landing-heatmap :is(figcaption, .landing-heatmap-legend, #landing-heatmap-note) { padding-inline: 0.375rem; }
+  .landing-coverage { margin-inline: 0.375rem; }
+  #landing-grid { border-spacing: 1px 4px; }
+  #landing-grid tbody td span { font-size: 0.6rem; letter-spacing: -0.02em; }
+}
+
+.pearson-section {
+  --pearson-negative: #2e6bbd;
+  --pearson-positive: #be535d;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.pearson-section h3 { font-size: 1rem; }
+
+.pearson-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: var(--content-gap);
+}
+
+.pearson-chart {
+  min-inline-size: 0;
+  margin: 0;
+  padding: clamp(0.625rem, 2vw, 1rem);
+  border: var(--frame-width) solid var(--line);
+  border-radius: var(--radius-overlay);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pearson-chart figcaption { margin-block-end: 0.75rem; font-size: 1rem; font-weight: 660; }
+
+.pearson-chart-rows {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pearson-chart-row, .pearson-scale {
+  display: grid;
+  grid-template-columns: 4.25em minmax(0, 1fr) 6.25ch;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pearson-coefficient { text-align: end; white-space: nowrap; }
+
+.pearson-track {
+  position: relative;
+  block-size: 0.65rem;
+  overflow: hidden;
+  border-radius: 0.2rem;
+  background: var(--control);
+}
+
+.pearson-track::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(50% - 0.5px);
+  border-inline-start: 1px solid var(--muted);
+}
+
+.pearson-bar {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 50%;
+  background: var(--pearson-positive);
+}
+
+.pearson-bar.is-negative {
+  inset-inline: auto 50%;
+  background: var(--pearson-negative);
+}
+
+.pearson-scale { margin-block-start: 0.35rem; }
+
+.pearson-ticks {
+  display: grid;
+  grid-column: 2;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: center;
+  color: var(--muted);
+}
+
+.pearson-ticks :nth-child(2) { text-align: center; }
+.pearson-ticks :last-child { text-align: end; }
+
+.pearson-legend { font-size: 0.75rem; }
+
+.pearson-details { min-inline-size: 0; }
+
+.pearson-details summary {
+  padding: 0.6rem 0.75rem;
+  border: var(--frame-width) solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-quiet);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+#pearson { margin-block-start: 0.5rem; }
+#pearson thead th:not(:first-child) { text-align: center; }
+
 .correlation {
   background: color-mix(in srgb, var(--correlation-color) var(--correlation-weight), var(--surface));
   text-align: center;
@@ -841,7 +1091,7 @@ thead th { font-size: 0.875rem; font-weight: 600; }
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: stretch;
   }
-  #report-section, #test-result, #measurement { grid-column: 1 / -1; }
+  #training-data-summary, #report-section, #test-result, #measurement { grid-column: 1 / -1; }
 }
 
 @media (max-width: 38rem) {
