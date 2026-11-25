@@ -36,12 +36,40 @@ def is_valid(landing):
     return all(1 <= coordinate <= 5 for coordinate in landing)
 
 
+def noise_floor(features, coordinates):
+    """同一組四參數內的落點變異 = MSE 的理論下限（不可約誤差）。"""
+    _, groups = np.unique(features, axis=0, return_inverse=True)
+    groups = groups.ravel()
+    group_count = len(np.bincount(groups))
+    floor = {}
+    for column, axis in enumerate("xy"):
+        y = coordinates[:, column].astype(float)
+        group_mean = np.bincount(groups, weights=y) / np.bincount(groups)
+        ssw = ((y - group_mean[groups]) ** 2).sum()
+        dof = len(y) - group_count  # 自由度：球數 − 組數
+        floor[axis] = float(ssw / dof) if dof > 0 else None
+    return floor
+
+
+def hit_ceiling(features, coordinates):
+    """每組都猜最常出現的那一格時，能命中的比例（粗略上界，略偏樂觀）。"""
+    _, groups = np.unique(features, axis=0, return_inverse=True)
+    groups = groups.ravel()
+    hit = total = 0
+    for group in np.unique(groups):
+        rows = coordinates[groups == group]
+        if len(rows) < 2:  # 只有 1 球的組不算
+            continue
+        hit += max(Counter(map(tuple, rows)).values())
+        total += len(rows)
+    return hit / total if total else None
+
+
 def make_folds(features, coordinates):
     settings, groups = np.unique(features, axis=0, return_inverse=True)
     groups = groups.ravel()
     if len(settings) < len(FOLDS):
         raise TrainingError("五折驗證至少需要五組不同的有效四參數設定。")
-
     # X、Y 實測值仍分別作為迴歸目標。合成的格號只用於分層。
     landing_classes = (coordinates[:, 1] - 1) * 5 + coordinates[:, 0]
     options = dict(n_splits=len(FOLDS), shuffle=True, random_state=RANDOM_SEED)
