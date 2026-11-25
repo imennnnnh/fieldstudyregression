@@ -2,7 +2,7 @@
 
 import warnings
 from collections import Counter
-from math import hypot, sqrt
+from math import floor, hypot, sqrt
 from statistics import mean
 
 import numpy as np
@@ -168,6 +168,15 @@ def landing_errors(actual, predicted):
     return {"dx": dx, "dy": dy, "distance": hypot(dx, dy)}
 
 
+def validation_hits(records):
+    same_cell = within_one = 0
+    for row in records:
+        x, y = float(row["predicted_x"]), float(row["predicted_y"])
+        same_cell += (floor(x + 0.5), floor(y + 0.5)) == (int(row["actual_x"]), int(row["actual_y"]))
+        within_one += float(row["distance"]) <= 1
+    return {"same_cell": same_cell, "within_one": within_one}
+
+
 def evaluate(records, x_key="predicted_x", y_key="predicted_y"):
     """以同一批球逐球同權計算兩軸及整球誤差。"""
     errors = [
@@ -283,6 +292,7 @@ def train(balls, counts, run_id, progress):
         "split": split,
         "selection": selection,
         "winners": winners,
+        "validation_hits": validation_hits(records),
         "evaluation": evaluate(records),
         "baseline_evaluation": evaluate(records, "baseline_x", "baseline_y"),
         "note": REPORT_NOTE,

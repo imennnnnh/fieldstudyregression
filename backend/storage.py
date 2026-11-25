@@ -14,6 +14,7 @@ from sklearn.base import is_regressor
 from sklearn.utils.validation import check_is_fitted
 
 from .excel_loader import PARAMETER_KEYS, ExcelSource
+from .training import validation_hits
 
 
 TASK_TYPE = "regression"
@@ -200,7 +201,12 @@ def load_bundle(directory, run_id, *, skip_legacy=False):
         reader = csv.DictReader(stream)
         if "ball_id" not in (reader.fieldnames or []):
             raise ValueError("逐折驗證紀錄不完整。")
-        ball_ids = [row["ball_id"] for row in reader]
+        if "validation_hits" not in report:
+            rows = list(reader)
+            report["validation_hits"] = validation_hits(rows)
+            ball_ids = [row["ball_id"] for row in rows]
+        else:
+            ball_ids = [row["ball_id"] for row in reader]
         if len(ball_ids) != report["data"]["training_balls"] or len(set(ball_ids)) != len(ball_ids) or not all(ball_ids):
             raise ValueError("逐折驗證紀錄的球數或唯一球號不符。")
     models = {axis: joblib.load(directory / f"model_{axis}.joblib") for axis in "xy"}
