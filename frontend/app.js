@@ -499,12 +499,21 @@ function renderEvaluation(id, caption, batches) {
   ]));
 }
 
-function renderValidationErrors(evaluation, baseline) {
+function renderValidationErrors(evaluation, baseline, hits) {
   const modelDistance = evaluation.mean_distance;
   const baselineDistance = baseline.mean_distance;
   // Round the scale up to a half-grid step and give two zero values a visible scale.
   const maximum = Math.max(0.5, Math.ceil(Math.max(modelDistance, baselineDistance) * 2) / 2);
-  byId("validation-count").textContent = `依五折驗證的 ${number.format(evaluation.balls)} 顆球計算，每球同權`;
+  byId("validation-count").textContent = `依五折驗證的 ${number.format(evaluation.balls)} 顆有效球計算，每球同權`;
+  const hitList = byId("validation-hits");
+  hitList.hidden = !hits || evaluation.balls === 0;
+  if (!hitList.hidden) {
+    for (const [index, count] of [hits.same_cell, hits.within_one].entries()) {
+      const row = hitList.children[index];
+      row.querySelector("[data-count]").textContent = `${number.format(count)} / ${number.format(evaluation.balls)}`;
+      row.querySelector("[data-rate]").textContent = `${(100 * count / evaluation.balls).toFixed(1)}%`;
+    }
+  }
   byId("validation-mean-distance").textContent = modelDistance.toFixed(2);
   byId("validation-x-mae").textContent = `${evaluation.x.mae.toFixed(2)} 格`;
   byId("validation-y-mae").textContent = `${evaluation.y.mae.toFixed(2)} 格`;
@@ -593,7 +602,7 @@ function renderReport(report) {
   renderPearson(report.data_summary.pearson);
   renderFoldGuide(report.split);
   renderModelSelection(report);
-  renderValidationErrors(report.evaluation, report.baseline_evaluation);
+  renderValidationErrors(report.evaluation, report.baseline_evaluation, report.validation_hits);
   const summary = byId("training-data-summary");
   const summaryWasHidden = summary.hidden;
   summary.hidden = false;

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>桌球發球機落點預測</title>
-  <link rel="stylesheet" href="/static/styles.css?v=92">
-  <script src="/static/app.js?v=31" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=93">
+  <script src="/static/app.js?v=32" defer></script>
 </head>
 <body>
   <div id="page-start" aria-hidden="true"></div>
@@ -247,6 +247,16 @@
                 </div>
                 <p class="report-meta">數字越小，預測越接近實測落點</p>
               </div>
+              <dl class="validation-hits" id="validation-hits" aria-label="五折驗證命中率" hidden>
+                <div>
+                  <dt>預測的 X、Y 四捨五入後，兩個都猜中實際格子</dt>
+                  <dd><span data-count></span> 球，<strong data-rate></strong></dd>
+                </div>
+                <div>
+                  <dt>預測點到實際落點的直線距離不超過 1 格</dt>
+                  <dd><span data-count></span> 球，<strong data-rate></strong></dd>
+                </div>
+              </dl>
               <dl class="validation-axis-errors">
                 <div>
                   <dt>X 軸平均差距</dt>

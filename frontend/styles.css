@@ -871,6 +871,24 @@ progress { display: block; inline-size: 100%; block-size: 0.55rem; margin: 0; ac
 .validation-error-scale :nth-child(2) { justify-self: center; }
 .validation-error-scale :last-child { justify-self: end; }
 
+.validation-hits {
+  margin: 0;
+  padding-inline: 0.75rem;
+  background: var(--surface);
+  border-radius: var(--radius-control);
+  font-size: 0.875rem;
+}
+.validation-hits > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  padding-block: 0.625rem;
+}
+.validation-hits > div + div { border-block-start: 1px solid var(--line); }
+.validation-hits dd { margin: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
 .validation-axis-errors {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
@@ -1236,7 +1254,7 @@ thead th { font-size: 0.875rem; font-weight: 600; }
 .panel :where(
   .file-list, .selected-file, .file-picker, .action-button,
   .training-count, .landing-coverage, .axis-chart, .landing-heatmap, .pearson-chart,
-  .report-block, .fold-cell, .model-result, .validation-axis-errors > div,
+  .report-block, .fold-cell, .model-result, .validation-hits, .validation-axis-errors > div,
   .table-wrap, .report-details > summary,
   .field input, .field select, .result-box, .report-empty
 ) {
