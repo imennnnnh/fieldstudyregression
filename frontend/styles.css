@@ -1205,6 +1205,7 @@ thead th { font-size: 0.875rem; font-weight: 600; }
 
 .pearson-track {
   position: relative;
+  isolation: isolate;
   block-size: 0.85rem;
   overflow: hidden;
   border-radius: 0.2rem;
